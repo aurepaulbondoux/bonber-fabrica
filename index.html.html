@@ -1,0 +1,1276 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>BonBër — Producción</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getFirestore, doc, getDoc, setDoc, deleteDoc, collection, getDocs } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  const firebaseConfig = {
+    apiKey: "AIzaSyDUk_3MieAc1ewvGd7VDdQLkXYqSLTFgUE",
+    authDomain: "bonber-produccion.firebaseapp.com",
+    projectId: "bonber-produccion",
+    storageBucket: "bonber-produccion.firebasestorage.app",
+    messagingSenderId: "61343173585",
+    appId: "1:61343173585:web:defd0c445dc9b3ea156ef0"
+  };
+  const app = initializeApp(firebaseConfig);
+  const db  = getFirestore(app);
+  window.fbGet = async (key) => {
+    try { const snap = await getDoc(doc(db,"bonber",key)); return snap.exists()?snap.data().value:null; } catch { return null; }
+  };
+  window.fbSet = async (key, val) => {
+    try { await setDoc(doc(db,"bonber",key),{value:val}); } catch(e) { console.error(e); }
+  };
+  window.fbDelete = async (key) => {
+    try { await deleteDoc(doc(db,"bonber",key)); } catch(e) { console.error(e); }
+  };
+  window.fbList = async (prefix) => {
+    try { const snap = await getDocs(collection(db,"bonber")); return snap.docs.map(d=>d.id).filter(id=>id.startsWith(prefix)); } catch { return []; }
+  };
+  window.firebaseReady = true;
+  window.dispatchEvent(new Event("firebaseReady"));
+</script>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f9fafb; }
+  input:focus, select:focus { outline: none; border-color: #facc15 !important; }
+  input[type="number"] { min-width: 72px; -moz-appearance: textfield; }
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button { opacity: 1; }
+  @media print {
+    body * { visibility: hidden !important; }
+    #reporte-print, #reporte-print * { visibility: visible !important; }
+    #reporte-print { position:fixed !important; top:0; left:0; width:100%; background:white !important; color:black !important; font-family:Arial,sans-serif; font-size:11px; padding:20px; }
+    #reporte-print .no-print { display:none !important; }
+    #analisis-print, #analisis-print * { visibility: visible !important; }
+    #analisis-print { position:fixed !important; top:0; left:0; width:100%; background:white !important; color:black !important; font-family:Arial,sans-serif; font-size:11px; padding:20px; }
+    #analisis-print .no-print { display:none !important; }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ── STORAGE ──
+async function sget(key) {
+  try { const val = await window.fbGet(key); return val ? JSON.parse(val) : null; } catch { return null; }
+}
+async function sset(key, val) {
+  try { await window.fbSet(key, JSON.stringify(val)); } catch(e) { console.error(e); }
+}
+async function slist(prefix) {
+  try { return await window.fbList(prefix); } catch { return []; }
+}
+
+// ── CONSTANTES ──
+const ADMIN = { id:"admin", username:"admin", password:"bonber2024", role:"admin", name:"Admin" };
+const DEFAULT_PARAMS = {
+  overrunMin:20, overrunIdeal:25, overrunMax:30,
+  sabores:[
+    {nombre:"Acai",overrunObj:25},{nombre:"Americana",overrunObj:25},{nombre:"Avellana",overrunObj:25},
+    {nombre:"Banana",overrunObj:25},{nombre:"Banana inglesa",overrunObj:25},{nombre:"Canela manzana",overrunObj:25},
+    {nombre:"Chocolate",overrunObj:25},{nombre:"Chocolate naranja",overrunObj:25},{nombre:"Choco origen",overrunObj:25},
+    {nombre:"Coco",overrunObj:25},{nombre:"Coco y Ddl",overrunObj:25},{nombre:"Ddl",overrunObj:25},
+    {nombre:"Ddl y miso",overrunObj:25},{nombre:"Frutos secos y miel",overrunObj:25},{nombre:"Frutilla",overrunObj:22},
+    {nombre:"Lima cilantro",overrunObj:22},{nombre:"Limón",overrunObj:22},{nombre:"Limón albahaca",overrunObj:22},
+    {nombre:"Maracuyá",overrunObj:22},{nombre:"Mascarpone",overrunObj:25},{nombre:"Mascarpone mora",overrunObj:25},
+    {nombre:"Mascarpone y frutos rojos",overrunObj:25},{nombre:"Menta granizada",overrunObj:25},{nombre:"Miel",overrunObj:25},
+    {nombre:"Mora frambuesa",overrunObj:22},{nombre:"Naranja jengibre",overrunObj:22},{nombre:"Pistacho",overrunObj:25},
+    {nombre:"Sambayon",overrunObj:25},{nombre:"Sambayon blanco",overrunObj:25},{nombre:"Sambayon rosado",overrunObj:25},
+    {nombre:"Sambayon Rosso",overrunObj:25},{nombre:"Sambayon tinto",overrunObj:25},{nombre:"Sésamo negro",overrunObj:25},
+    {nombre:"Tiramisú",overrunObj:25},{nombre:"Vainilla",overrunObj:25},
+  ],
+};
+const mkRow = (extra={}) => ({ id:Math.random().toString(36).slice(2), sabor:"", kgFab:"", kgMant:"", balde3:"", balde5:"", obs:"", pendiente:false, ...extra });
+const mkFicha = () => ({ rows:[mkRow()], operario:"", mantecadoPor:"", horaInicio:"", horaFin:"", cerrado:false });
+
+// ── HELPERS ──
+function parseHora(h) {
+  if(!h) return null;
+  const [hh,mm]=h.split(":").map(Number);
+  if(isNaN(hh)||isNaN(mm)) return null;
+  const v=hh+mm/60; return v>24?null:v;
+}
+function calcRow(r) {
+  const kgF=parseFloat(r.kgFab)||0, kgM=parseFloat(r.kgMant)||0;
+  const lS=((parseFloat(r.balde3)||0)*3)+((parseFloat(r.balde5)||0)*5);
+  const mermaFabPct = (kgF>0&&kgM>0)?(((kgF-kgM)/kgF)*100).toFixed(1):"-";
+  const overrun     = kgM>0?(((lS-kgM)/kgM)*100).toFixed(1):"-";
+  const mermaMantPct= kgM>0?((((kgM*1.3)-lS)/(kgM*1.3))*100).toFixed(1):"-";
+  return { mermaFabPct, overrun, mermaMantPct, litrosStock:lS };
+}
+function today() { return new Date().toISOString().split("T")[0]; }
+function fichasTieneDatos(f) {
+  if(!f||f.eliminado) return false;
+  if(f.horaInicio||f.horaFin||f.operario||f.mantecadoPor) return true;
+  return (f.rows||[]).some(r=>r.sabor||r.kgFab||r.kgMant||r.balde3||r.balde5);
+}
+
+// ── CALCULAR PENDIENTES (función global, fuera del componente) ──
+async function calcularPendientes(fechaActual, turnoIdxActual) {
+  const acum = {};
+  const fechas = [];
+  for(let i=30; i>=0; i--) {
+    const d = new Date(fechaActual);
+    d.setDate(d.getDate()-i);
+    fechas.push(d.toISOString().split("T")[0]);
+  }
+  for(const dia of fechas) {
+    let idx=0;
+    while(true) {
+      if(dia===fechaActual && idx>=turnoIdxActual) break;
+      const key=`bonber:ficha:${dia}:${idx}`;
+      const f=await sget(key);
+      if(!f) break;
+      if(!f.eliminado) {
+        for(const r of (f.rows||[])) {
+          if(!r.sabor) continue;
+          if(!acum[r.sabor]) acum[r.sabor]=0;
+          acum[r.sabor] += (parseFloat(r.kgFab)||0) - (parseFloat(r.kgMant)||0);
+        }
+      }
+      idx++;
+    }
+  }
+  return Object.entries(acum)
+    .filter(([,v])=>v>0.01)
+    .map(([sabor,kg])=>mkRow({sabor, kgMant:kg.toFixed(2), pendiente:true}));
+}
+
+// ── LOGIN ──
+function Login({ users, onLogin }) {
+  const [mode,setMode]=useState("pin");
+  const [pin,setPin]=useState("");
+  const [uname,setUname]=useState("");
+  const [pass,setPass]=useState("");
+  const [err,setErr]=useState("");
+  function handleDigit(d) {
+    if(d==="⌫"){setPin(p=>p.slice(0,-1));setErr("");return;}
+    const next=pin.length<4?pin+d:pin; setPin(next);
+    if(next.length===4){
+      const found=users.find(u=>u.role==="operario"&&u.pin===next&&u.active);
+      if(found) onLogin(found);
+      else{setErr("PIN incorrecto");setTimeout(()=>{setPin("");setErr("");},1200);}
+    }
+  }
+  function handleAdmin(){
+    const all=[ADMIN,...users.filter(u=>u.role==="admin")];
+    const found=all.find(u=>u.username===uname&&u.password===pass&&u.active!==false);
+    if(found) onLogin(found); else setErr("Credenciales incorrectas");
+  }
+  return (
+    <div style={{minHeight:"100vh",background:"#111827",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{marginBottom:32,textAlign:"center"}}>
+        <span style={{fontWeight:900,fontSize:36,color:"#facc15"}}>BonBër</span>
+        <p style={{color:"#9ca3af",fontSize:14,marginTop:4}}>Sistema de Producción</p>
+      </div>
+      <div style={{background:"white",borderRadius:16,boxShadow:"0 20px 40px rgba(0,0,0,0.3)",width:"100%",maxWidth:360,padding:24}}>
+        <div style={{display:"flex",background:"#f3f4f6",borderRadius:8,padding:4,marginBottom:24}}>
+          {[["pin","Operario"],["admin","Administrador"]].map(([m,l])=>(
+            <button key={m} onClick={()=>{setMode(m);setErr("");setPin("");}}
+              style={{flex:1,padding:8,borderRadius:6,fontSize:14,fontWeight:600,border:"none",cursor:"pointer",background:mode===m?"white":"transparent",boxShadow:mode===m?"0 1px 3px rgba(0,0,0,0.1)":"none",color:mode===m?"#111":"#6b7280"}}>{l}</button>
+          ))}
+        </div>
+        {mode==="pin"?(
+          <div>
+            <p style={{textAlign:"center",fontSize:14,color:"#6b7280",marginBottom:16}}>Ingresá tu PIN de 4 dígitos</p>
+            <div style={{display:"flex",justifyContent:"center",gap:12,marginBottom:24}}>
+              {[0,1,2,3].map(i=>(
+                <div key={i} style={{width:40,height:40,borderRadius:"50%",border:`2px solid ${pin.length>i?"#facc15":"#d1d5db"}`,background:pin.length>i?"#facc15":"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}}>
+                  {pin.length>i?"●":""}
+                </div>
+              ))}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12}}>
+              {[1,2,3,4,5,6,7,8,9,"",0,"⌫"].map((d,i)=>(
+                <button key={i} onClick={()=>d!==""&&handleDigit(String(d))}
+                  style={{height:56,borderRadius:12,fontSize:20,fontWeight:700,border:"none",cursor:d===""?"default":"pointer",background:d===""?"transparent":"#f3f4f6",visibility:d===""?"hidden":"visible"}}>{d}</button>
+              ))}
+            </div>
+            {err&&<p style={{color:"#ef4444",textAlign:"center",fontSize:14,marginTop:12}}>{err}</p>}
+          </div>
+        ):(
+          <div>
+            <div style={{marginBottom:12}}>
+              <label style={{fontSize:12,color:"#6b7280",display:"block",marginBottom:4}}>Usuario</label>
+              <input value={uname} onChange={e=>setUname(e.target.value)} style={{border:"1px solid #e5e7eb",borderRadius:8,padding:"8px 12px",width:"100%",fontSize:14}} placeholder="admin"/>
+            </div>
+            <div style={{marginBottom:16}}>
+              <label style={{fontSize:12,color:"#6b7280",display:"block",marginBottom:4}}>Contraseña</label>
+              <input type="password" value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleAdmin()} style={{border:"1px solid #e5e7eb",borderRadius:8,padding:"8px 12px",width:"100%",fontSize:14}} placeholder="••••••••"/>
+            </div>
+            {err&&<p style={{color:"#ef4444",fontSize:14,marginBottom:12}}>{err}</p>}
+            <button onClick={handleAdmin} style={{width:"100%",background:"#111",color:"white",fontWeight:600,padding:10,borderRadius:8,border:"none",cursor:"pointer",fontSize:14}}>Ingresar</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── REPORTE MODAL ──
+function ReporteModal({ reportFecha, reportFichas, params, onClose }) {
+  const thS={border:"1px solid #999",padding:"4px 6px",fontSize:10,textAlign:"center",color:"black",background:"#f0f0f0"};
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:50,overflowY:"auto",display:"flex",justifyContent:"center",padding:16}}>
+      <div id="reporte-print" style={{background:"white",borderRadius:16,boxShadow:"0 25px 50px rgba(0,0,0,0.3)",width:"100%",maxWidth:960,margin:"16px 0"}}>
+        <div className="no-print" style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 24px",borderBottom:"1px solid #e5e7eb"}}>
+          <div>
+            <h2 style={{fontWeight:900,fontSize:18,margin:0}}>🍦 BonBër — Ficha de Producción</h2>
+            <p style={{color:"#6b7280",fontSize:14,margin:0}}>Fecha: {reportFecha}</p>
+          </div>
+          <button onClick={onClose} style={{background:"none",border:"none",fontSize:24,cursor:"pointer",color:"#9ca3af"}}>×</button>
+        </div>
+        <div style={{padding:"16px 24px"}}>
+          {reportFichas.map((ficha,ti)=>{
+            const rs=ficha.rows||[];
+            const tF=rs.reduce((s,r)=>s+(parseFloat(r.kgFab)||0),0);
+            const tM=rs.reduce((s,r)=>s+(parseFloat(r.kgMant)||0),0);
+            const tL=rs.reduce((s,r)=>s+calcRow(r).litrosStock,0);
+            const ovT=tM>0?(((tL-tM)/tM)*100).toFixed(1):"-";
+            return (
+              <div key={ti} style={{marginBottom:24}}>
+                <p style={{fontWeight:"bold",fontSize:13,color:"black",marginBottom:4}}>Turno {ti+1}</p>
+                <p style={{fontSize:11,color:"#444",marginBottom:6}}>
+                  {ficha.horaInicio&&`Inicio: ${ficha.horaInicio}  `}
+                  {ficha.horaFin&&`Fin: ${ficha.horaFin}  `}
+                  {ficha.operario&&`Fabricado por: ${ficha.operario}  `}
+                  {ficha.mantecadoPor&&`Mantecado por: ${ficha.mantecadoPor}`}
+                </p>
+                <div style={{overflowX:"auto"}}>
+                  <table style={{width:"100%",borderCollapse:"collapse"}}>
+                    <thead><tr>{["Sabor","Kg Fab.","Kg Mant.","Merma Fab%","Balde 3L","Balde 5L","Litros","Overrun%","Merma Mant%","Obs."].map(h=>(
+                      <th key={h} style={thS}>{h}</th>
+                    ))}</tr></thead>
+                    <tbody>{rs.map((r,i)=>{
+                      const c=calcRow(r);const ov=parseFloat(c.overrun);const ovAlert=!isNaN(ov)&&ov>params.overrunMax;
+                      return <tr key={i} style={{background:i%2===0?"white":"#f9f9f9"}}>
+                        <td style={{border:"1px solid #999",padding:"3px 6px",fontWeight:500,color:"black"}}>{r.pendiente?"📦 ":""}{r.sabor}</td>
+                        <td style={{border:"1px solid #999",padding:"3px 6px",textAlign:"center",color:"black"}}>{r.kgFab}</td>
+                        <td style={{border:"1px solid #999",padding:"3px 6px",textAlign:"center",color:"black"}}>{r.kgMant}</td>
+                        <td style={{border:"1px solid #999",padding:"3px 6px",textAlign:"center",color:"black"}}>{c.mermaFabPct}{c.mermaFabPct!=="-"?"%":""}</td>
+                        <td style={{border:"1px solid #999",padding:"3px 6px",textAlign:"center",color:"black"}}>{r.balde3}</td>
+                        <td style={{border:"1px solid #999",padding:"3px 6px",textAlign:"center",color:"black"}}>{r.balde5}</td>
+                        <td style={{border:"1px solid #999",padding:"3px 6px",textAlign:"center",color:"black"}}>{c.litrosStock>0?c.litrosStock.toFixed(1)+" L":"-"}</td>
+                        <td style={{border:"1px solid #999",padding:"3px 6px",textAlign:"center",fontWeight:"bold",color:ovAlert?"red":"green"}}>{c.overrun}{c.overrun!=="-"?"%":""}{ovAlert?" ⚠️":""}</td>
+                        <td style={{border:"1px solid #999",padding:"3px 6px",textAlign:"center",color:"black"}}>{c.mermaMantPct}{c.mermaMantPct!=="-"?"%":""}</td>
+                        <td style={{border:"1px solid #999",padding:"3px 6px",fontSize:10,color:"#444"}}>{r.obs}</td>
+                      </tr>;
+                    })}</tbody>
+                  </table>
+                </div>
+                <div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:8}}>
+                  {[["Kg Fab.",tF.toFixed(2)+" kg"],["Kg Mant.",tM.toFixed(2)+" kg"],["Litros",tL.toFixed(2)+" L"]].map(([l,v])=>(
+                    <div key={l} style={{border:"1px solid #ccc",padding:"5px 12px",borderRadius:4}}>
+                      <span style={{fontSize:9,color:"#666",display:"block"}}>{l}</span>
+                      <strong style={{color:"black"}}>{v}</strong>
+                    </div>
+                  ))}
+                  <div style={{border:"1px solid #ccc",padding:"5px 12px",borderRadius:4}}>
+                    <span style={{fontSize:9,color:"#666",display:"block"}}>Overrun</span>
+                    <strong style={{color:parseFloat(ovT)>params.overrunMax?"red":"green"}}>{ovT}{ovT!=="-"?"%":""}</strong>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="no-print" style={{padding:"16px 24px",borderTop:"1px solid #e5e7eb",background:"#f9fafb",borderRadius:"0 0 16px 16px",display:"flex",alignItems:"center",gap:12}}>
+          <p style={{fontSize:12,color:"#6b7280",margin:0}}>Presioná <strong>Ctrl+P</strong> → <strong>Guardar como PDF</strong></p>
+          <button onClick={onClose} style={{marginLeft:"auto",background:"#111",color:"white",fontWeight:600,padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:14}}>Cerrar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── ANALISIS MODAL ──
+function AnalisisModal({ analisisDesde, analisisHasta, kpis, litrosXHora, kgFabXHora, operariosMap, saboresMap, params, onClose }) {
+  const avg=arr=>arr.length>0?(arr.reduce((a,b)=>a+b,0)/arr.length):null;
+  const fmt=v=>v!=null?v.toFixed(1):"-";
+  const semOv=v=>v==null?"#888":v>params.overrunMax?"#dc2626":v<(params.overrunMin||0)?"#2563eb":Math.abs(v-(params.overrunIdeal||25))<=3?"#16a34a":v>params.overrunMax*0.85?"#ea580c":"#16a34a";
+  const semM=(v,max)=>v==null?"#888":v>max?"#dc2626":v>max*0.75?"#ea580c":"#16a34a";
+  const thS={border:"1px solid #999",padding:"4px 6px",fontSize:10,textAlign:"center",color:"black",background:"#f0f0f0"};
+  const tdS={border:"1px solid #999",padding:"3px 6px",textAlign:"center",color:"black"};
+  const tdL={border:"1px solid #999",padding:"3px 6px",textAlign:"left",fontWeight:500,color:"black"};
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:50,overflowY:"auto",display:"flex",justifyContent:"center",padding:16}}>
+      <div id="analisis-print" style={{background:"white",borderRadius:16,boxShadow:"0 25px 50px rgba(0,0,0,0.3)",width:"100%",maxWidth:960,margin:"16px 0"}}>
+        <div className="no-print" style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 24px",borderBottom:"1px solid #e5e7eb"}}>
+          <div>
+            <h2 style={{fontWeight:900,fontSize:18,margin:0}}>🍦 BonBër — Análisis de Producción</h2>
+            <p style={{color:"#6b7280",fontSize:14,margin:0}}>Período: {analisisDesde} al {analisisHasta}</p>
+          </div>
+          <button onClick={onClose} style={{background:"none",border:"none",fontSize:24,cursor:"pointer",color:"#9ca3af"}}>×</button>
+        </div>
+        <div style={{padding:"16px 24px"}}>
+          <p style={{fontSize:11,color:"#555",marginBottom:12}}>Generado: {new Date().toLocaleString("es-UY")}</p>
+          <p style={{fontWeight:"bold",fontSize:13,marginBottom:8}}>KPIs del período</p>
+          <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:16}}>
+            {[
+              ["Kg fab. totales",kpis.totKgFab.toFixed(1)+" kg","#166534"],
+              ["Litros totales",kpis.totLitros.toFixed(1)+" L","#2563eb"],
+              ["Kg fab./hora",kgFabXHora!=null?kgFabXHora.toFixed(1)+" kg/h":"-","#166534"],
+              ["L/hora prom.",litrosXHora!=null?litrosXHora.toFixed(1)+" L/h":"-","#4f46e5"],
+              ["Overrun prom.",fmt(kpis.avgOverrun)+"%",semOv(kpis.avgOverrun)],
+              ["Merma fab.",fmt(kpis.avgMermaFab)+"%",semM(kpis.avgMermaFab,15)],
+              ["Merma mant.",fmt(kpis.avgMermaMant)+"%",semM(kpis.avgMermaMant,20)],
+            ].map(([l,v,c])=>(
+              <div key={l} style={{border:"1px solid #ccc",padding:"6px 14px",borderRadius:6}}>
+                <span style={{fontSize:9,color:"#666",display:"block"}}>{l}</span>
+                <strong style={{color:c,fontSize:15}}>{v}</strong>
+              </div>
+            ))}
+          </div>
+          {Object.keys(operariosMap).length>0&&(
+            <div style={{marginBottom:16}}>
+              <p style={{fontWeight:"bold",fontSize:13,marginBottom:6}}>Rendimiento por operario</p>
+              <div style={{overflowX:"auto"}}>
+                <table style={{width:"100%",borderCollapse:"collapse"}}>
+                  <thead><tr>{["Operario","Turnos","Horas","Kg Fab.","Kg/hora","Litros","L/hora","Overrun","Merma Fab","Merma Mant"].map(h=><th key={h} style={thS}>{h}</th>)}</tr></thead>
+                  <tbody>{Object.entries(operariosMap).sort((a,b)=>b[1].litros-a[1].litros).map(([op,v],i)=>{
+                    const aOv=avg(v.overruns),aMF=avg(v.mermasFab),aMM=avg(v.mermasMant);
+                    const lph=v.horas>0?(v.litros/v.horas).toFixed(1)+" L/h":"-";
+                    const kfph=v.horas>0&&v.kgFab>0?(v.kgFab/v.horas).toFixed(1)+" kg/h":"-";
+                    return <tr key={op} style={{background:i%2===0?"white":"#f9f9f9"}}>
+                      <td style={tdL}>{op}</td>
+                      <td style={tdS}>{v.turnos}</td>
+                      <td style={tdS}>{v.horas>0?v.horas.toFixed(1)+" h":"-"}</td>
+                      <td style={{...tdS,color:"#166534",fontWeight:"bold"}}>{v.kgFab.toFixed(1)} kg</td>
+                      <td style={{...tdS,color:"#166534",fontWeight:"bold"}}>{kfph}</td>
+                      <td style={{...tdS,color:"#2563eb",fontWeight:"bold"}}>{v.litros.toFixed(1)} L</td>
+                      <td style={{...tdS,color:"#4f46e5",fontWeight:"bold"}}>{lph}</td>
+                      <td style={{...tdS,color:semOv(aOv),fontWeight:"bold"}}>{fmt(aOv)}%</td>
+                      <td style={{...tdS,color:semM(aMF,15),fontWeight:"bold"}}>{fmt(aMF)}%</td>
+                      <td style={{...tdS,color:semM(aMM,20),fontWeight:"bold"}}>{fmt(aMM)}%</td>
+                    </tr>;
+                  })}</tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          {Object.keys(saboresMap).length>0&&(
+            <div>
+              <p style={{fontWeight:"bold",fontSize:13,marginBottom:6}}>Overrun y merma por sabor</p>
+              <div style={{overflowX:"auto"}}>
+                <table style={{width:"100%",borderCollapse:"collapse"}}>
+                  <thead><tr>{["Sabor","Kg Fab.","Litros","Overrun prom.","Merma Fab prom."].map(h=><th key={h} style={thS}>{h}</th>)}</tr></thead>
+                  <tbody>{Object.entries(saboresMap).sort((a,b)=>b[1].litros-a[1].litros).map(([sab,v],i)=>{
+                    const aOv=avg(v.overruns),aMF=avg(v.mermasFab);
+                    return <tr key={sab} style={{background:i%2===0?"white":"#f9f9f9"}}>
+                      <td style={tdL}>{sab}</td>
+                      <td style={tdS}>{v.kgFab.toFixed(1)} kg</td>
+                      <td style={{...tdS,color:"#2563eb",fontWeight:"bold"}}>{v.litros.toFixed(1)} L</td>
+                      <td style={{...tdS,color:semOv(aOv),fontWeight:"bold"}}>{fmt(aOv)}%</td>
+                      <td style={{...tdS,color:semM(aMF,15),fontWeight:"bold"}}>{fmt(aMF)}%</td>
+                    </tr>;
+                  })}</tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="no-print" style={{padding:"16px 24px",borderTop:"1px solid #e5e7eb",background:"#f9fafb",borderRadius:"0 0 16px 16px",display:"flex",alignItems:"center",gap:12}}>
+          <p style={{fontSize:12,color:"#6b7280",margin:0}}>Presioná <strong>Ctrl+P</strong> → <strong>Guardar como PDF</strong></p>
+          <button onClick={onClose} style={{marginLeft:"auto",background:"#111",color:"white",fontWeight:600,padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:14}}>Cerrar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── MAIN APP ──
+function App() {
+  const [fbReady,setFbReady]=useState(!!window.firebaseReady);
+  const [user,setUser]=useState(null);
+  const [tab,setTab]=useState("Producción");
+  const [fecha,setFecha]=useState(today());
+  const [users,setUsers]=useState([]);
+  const [params,setParams]=useState(DEFAULT_PARAMS);
+  const [appReady,setAppReady]=useState(false);
+  const [fichas,setFichas]=useState({});
+  const [turnoIdx,setTurnoIdx]=useState(0);
+  const [confirmCierre,setConfirmCierre]=useState(false);
+  const [erroresCierre,setErroresCierre]=useState([]);
+  const [reportFecha,setReportFecha]=useState(today());
+  const [reportFichas,setReportFichas]=useState([]);
+  const [reportLoading,setReportLoading]=useState(false);
+  const [fichaKeys,setFichaKeys]=useState([]);
+  const [showReporte,setShowReporte]=useState(false);
+  const [confirmDeleteTurno,setConfirmDeleteTurno]=useState(null);
+  const [confirmDeleteStep,setConfirmDeleteStep]=useState(0);
+  const [editandoTurno,setEditandoTurno]=useState(null);
+  const [analisisDesde,setAnalisisDesde]=useState(()=>{const d=new Date();d.setDate(d.getDate()-13);return d.toISOString().split("T")[0];});
+  const [analisisHasta,setAnalisisHasta]=useState(today());
+  const [analisisDatos,setAnalisisDatos]=useState([]);
+  const [analisisLoading,setAnalisisLoading]=useState(false);
+  const [analisisRan,setAnalisisRan]=useState(false);
+  const [showAnalisisModal,setShowAnalisisModal]=useState(false);
+  const [analisisModalData,setAnalisisModalData]=useState(null);
+  const [newName,setNewName]=useState("");
+  const [newPin,setNewPin]=useState("");
+  const [newRole,setNewRole]=useState("operario");
+  const [newPass,setNewPass]=useState("");
+  const [userMsg,setUserMsg]=useState("");
+  const [saving,setSaving]=useState(false);
+  const savingTimer=useRef(null);
+
+  const isAdmin=user?.role==="admin";
+  const TABS=isAdmin?["Producción","Reportes","Análisis","Parámetros","Usuarios"]:["Producción"];
+  const fichaKey=`bonber:ficha:${fecha}:${turnoIdx}`;
+  const fichaHoy=fichas[fichaKey]||mkFicha();
+  const rows=fichaHoy.rows||[];
+  const locked=!fichaHoy.horaInicio&&!fichaHoy.cerrado;
+
+  // Firebase ready
+  useEffect(()=>{
+    if(window.firebaseReady){setFbReady(true);return;}
+    const h=()=>setFbReady(true);
+    window.addEventListener("firebaseReady",h);
+    return ()=>window.removeEventListener("firebaseReady",h);
+  },[]);
+
+  // Init app
+  useEffect(()=>{
+    if(!fbReady) return;
+    (async()=>{
+      const p=await sget("bonber:params"); if(p) setParams(p);
+      const u=await sget("bonber:users");  if(u) setUsers(u);
+      setAppReady(true);
+    })();
+  },[fbReady]);
+
+  // Cargar turno activo al cambiar fecha o usuario
+  useEffect(()=>{
+    if(!user) return;
+    setFichas({});setTurnoIdx(0);setConfirmCierre(false);setErroresCierre([]);
+    (async()=>{
+      let idx=0;
+      while(true){
+        const key=`bonber:ficha:${fecha}:${idx}`;
+        const f=await sget(key);
+        if(!f){
+          // Turno nuevo: calcular pendientes e inyectar
+          const pendientes=await calcularPendientes(fecha,idx);
+          const ficha=mkFicha();
+          if(pendientes.length>0){
+            ficha.rows=[...pendientes, mkRow()];
+          }
+          setFichas(prev=>({...prev,[key]:ficha}));
+          setTurnoIdx(idx);
+          break;
+        }
+        if(!f.eliminado){
+          setFichas(prev=>({...prev,[key]:f}));
+          if(!f.cerrado){setTurnoIdx(idx);break;}
+        }
+        idx++;
+      }
+    })();
+  },[fecha,user]);
+
+  // Cargar reportes
+  const cargarReportFichas = useCallback(async()=>{
+    setReportFichas([]);setReportLoading(true);
+    const result=[];let idx=0;
+    while(true){
+      const key=`bonber:ficha:${reportFecha}:${idx}`;
+      const f=await sget(key);
+      if(!f) break;
+      if(!f.eliminado&&fichasTieneDatos(f)) result.push({...f,_idx:idx,_key:key});
+      idx++;
+    }
+    setReportFichas(result);setReportLoading(false);
+  },[reportFecha]);
+
+  useEffect(()=>{
+    if(!isAdmin) return;
+    cargarReportFichas();
+  },[reportFecha,isAdmin,tab]);
+
+  useEffect(()=>{
+    if(!isAdmin||tab!=="Reportes") return;
+    (async()=>{
+      const keys=await slist("bonber:ficha:");
+      const fechas=[...new Set(keys.map(k=>k.replace("bonber:ficha:","").split(":")[0]))].filter(Boolean).sort().reverse();
+      setFichaKeys(fechas);
+    })();
+  },[isAdmin,tab]);
+
+  // Persistencia
+  async function persistFicha(f){
+    setFichas(prev=>({...prev,[fichaKey]:f}));
+    setSaving(true);clearTimeout(savingTimer.current);
+    await sset(fichaKey,f);
+    savingTimer.current=setTimeout(()=>setSaving(false),800);
+  }
+  function updateRow(id,field,val){persistFicha({...fichaHoy,rows:rows.map(r=>r.id===id?{...r,[field]:val}:r)});}
+  function addRow(){persistFicha({...fichaHoy,rows:[...rows,mkRow()]});}
+  function removeRow(id){if(rows.length>1) persistFicha({...fichaHoy,rows:rows.filter(r=>r.id!==id)});}
+
+  // Validación y cierre
+  function validarCierre(){
+    const errs=[];
+    if(!fichaHoy.horaInicio) errs.push("⏱ Hora de inicio");
+    if(!fichaHoy.horaFin)    errs.push("⏱ Hora de fin");
+    const hayFab=rows.some(r=>parseFloat(r.kgFab)>0);
+    const hayMant=rows.some(r=>(parseFloat(r.balde3)||0)+(parseFloat(r.balde5)||0)>0);
+    if(hayFab&&!fichaHoy.operario)   errs.push("👷 Fabricado por (hay kg fabricados cargados)");
+    if(hayMant&&!fichaHoy.mantecadoPor) errs.push("🍦 Mantecado por (hay baldes cargados)");
+    const inc=rows.filter(r=>{
+      if(!r.sabor.trim()) return false;
+      return parseFloat(r.kgMant)>0&&!((parseFloat(r.balde3)||0)+(parseFloat(r.balde5)||0)>0);
+    });
+    if(inc.length>0) errs.push(`📋 ${inc.length} fila(s) con kg mantecados pero sin baldes`);
+    const todasVacias=rows.every(r=>!r.sabor.trim()&&!r.kgFab&&!r.kgMant&&!r.balde3&&!r.balde5);
+    if(todasVacias) errs.push("📋 No hay producción cargada");
+    return errs;
+  }
+  function intentarCerrar(){const e=validarCierre();if(e.length>0){setErroresCierre(e);return;}setErroresCierre([]);setConfirmCierre(true);}
+  function cerrarTurno(){
+    const horaFin=fichaHoy.horaFin||new Date().toTimeString().slice(0,5);
+    const cerrada={...fichaHoy,cerrado:true,horaFin};
+    setFichas(prev=>({...prev,[fichaKey]:cerrada}));sset(fichaKey,cerrada);
+    const ni=turnoIdx+1,nk=`bonber:ficha:${fecha}:${ni}`;
+    setFichas(prev=>({...prev,[nk]:mkFicha()}));setTurnoIdx(ni);
+    setConfirmCierre(false);setErroresCierre([]);
+  }
+
+  // Edición de reportes
+  function updateReportRow(key,ficha,id,field,val){
+    const updated={...ficha,rows:(ficha.rows||[]).map(r=>r.id===id?{...r,[field]:val}:r)};
+    setReportFichas(prev=>prev.map(f=>f._key===key?{...updated,_key:f._key,_idx:f._idx}:f));
+    sset(key,updated);
+  }
+  function addReportRow(key,ficha){
+    const updated={...ficha,rows:[...(ficha.rows||[]),mkRow()]};
+    setReportFichas(prev=>prev.map(f=>f._key===key?{...updated,_key:f._key,_idx:f._idx}:f));
+    sset(key,updated);
+  }
+  function removeReportRow(key,ficha,id){
+    if((ficha.rows||[]).length<=1) return;
+    const updated={...ficha,rows:(ficha.rows||[]).filter(r=>r.id!==id)};
+    setReportFichas(prev=>prev.map(f=>f._key===key?{...updated,_key:f._key,_idx:f._idx}:f));
+    sset(key,updated);
+  }
+  async function guardarEdicionTurno(key,ficha){
+    const cerrada={...ficha,cerrado:true};
+    await sset(key,cerrada);
+    setReportFichas(prev=>prev.map(f=>f._key===key?{...cerrada,_key:f._key,_idx:f._idx}:f));
+    setEditandoTurno(null);
+  }
+  async function eliminarTurno(key){
+    const f=await sget(key);
+    if(f) await sset(key,{...f,eliminado:true});
+    setConfirmDeleteTurno(null);setConfirmDeleteStep(0);
+    await cargarReportFichas();
+  }
+
+  // Totales producción
+  const rowsConDatos=rows.filter(r=>parseFloat(r.kgMant)>0||(parseFloat(r.balde3)||0)+(parseFloat(r.balde5)||0)>0);
+  const totKgFab=rows.reduce((s,r)=>s+(parseFloat(r.kgFab)||0),0);
+  const totKgMant=rows.reduce((s,r)=>s+(parseFloat(r.kgMant)||0),0);
+  const totLitros=rows.reduce((s,r)=>s+calcRow(r).litrosStock,0);
+  const overrunTotal=rowsConDatos.length>0&&totKgMant>0?(((totLitros-totKgMant)/totKgMant)*100).toFixed(1):"-";
+
+  // Params y usuarios
+  async function saveParams(p){setParams(p);await sset("bonber:params",p);}
+  function updateParam(f,v){saveParams({...params,[f]:v});}
+  async function addUser(){
+    if(!newName){setUserMsg("Ingresá un nombre.");return;}
+    if(newRole==="operario"&&(newPin.length!==4||isNaN(newPin))){setUserMsg("PIN debe ser 4 dígitos.");return;}
+    if(newRole==="admin"&&!newPass){setUserMsg("Ingresá una contraseña.");return;}
+    const dup=users.find(u=>newRole==="operario"?u.pin===newPin&&u.role==="operario":u.username===newName.toLowerCase().replace(/ /g,"_"));
+    if(dup){setUserMsg("Ya existe.");return;}
+    const nu=newRole==="operario"
+      ?{id:Math.random().toString(36).slice(2),name:newName,role:"operario",pin:newPin,active:true}
+      :{id:Math.random().toString(36).slice(2),name:newName,username:newName.toLowerCase().replace(/ /g,"_"),password:newPass,role:"admin",active:true};
+    const updated=[...users,nu];setUsers(updated);await sset("bonber:users",updated);
+    setNewName("");setNewPin("");setNewPass("");
+    setUserMsg("✓ Usuario creado.");setTimeout(()=>setUserMsg(""),2000);
+  }
+  async function toggleUser(id){const u=users.map(x=>x.id===id?{...x,active:!x.active}:x);setUsers(u);await sset("bonber:users",u);}
+  async function deleteUser(id){const u=users.filter(x=>x.id!==id);setUsers(u);await sset("bonber:users",u);}
+
+  // Análisis
+  async function correrAnalisis(){
+    setAnalisisLoading(true);setAnalisisRan(true);
+    const desde=new Date(analisisDesde),hasta=new Date(analisisHasta);
+    const dias=[];
+    for(let d=new Date(desde);d<=hasta;d.setDate(d.getDate()+1)) dias.push(d.toISOString().split("T")[0]);
+    const resultado=[];
+    for(const dia of dias){
+      let idx=0,turnos=[];
+      while(true){const key=`bonber:ficha:${dia}:${idx}`;const f=await sget(key);if(!f)break;if(!f.eliminado)turnos.push(f);idx++;}
+      if(!turnos.length){resultado.push({fecha:dia,litros:0,kgFab:0,kgMant:0,overruns:[],mermasFab:[],mermasMant:[],operarios:{},saboresData:[],horasTrabajadas:0});continue;}
+      let litros=0,kgFab=0,kgMant=0,overruns=[],mermasFab=[],mermasMant=[],operarios={},saboresData=[],horasTrabajadas=0;
+      for(const t of turnos){
+        const hI=parseHora(t.horaInicio),hF=parseHora(t.horaFin);
+        const dur=(hI!=null&&hF!=null&&hF>hI)?hF-hI:0;horasTrabajadas+=dur;
+        const op=t.operario||"Sin asignar";
+        if(!operarios[op]) operarios[op]={kgFab:0,kgMant:0,litros:0,overruns:[],mermasFab:[],mermasMant:[],turnos:0,horas:0};
+        operarios[op].turnos++;operarios[op].horas+=dur;
+        for(const r of (t.rows||[])){
+          if(!r.sabor&&!r.kgFab&&!r.kgMant) continue;
+          // Filas pendientes no suman kgFab (ya se contó en el turno original)
+          const kF=r.pendiente?0:(parseFloat(r.kgFab)||0);
+          const kM=parseFloat(r.kgMant)||0;
+          const c=calcRow(r);const lS=c.litrosStock;
+          litros+=lS;kgFab+=kF;kgMant+=kM;
+          operarios[op].kgFab+=kF;operarios[op].kgMant+=kM;operarios[op].litros+=lS;
+          if(c.overrun!=="-"){overruns.push(parseFloat(c.overrun));operarios[op].overruns.push(parseFloat(c.overrun));}
+          if(c.mermaFabPct!=="-"){mermasFab.push(parseFloat(c.mermaFabPct));operarios[op].mermasFab.push(parseFloat(c.mermaFabPct));}
+          if(c.mermaMantPct!=="-"){mermasMant.push(parseFloat(c.mermaMantPct));operarios[op].mermasMant.push(parseFloat(c.mermaMantPct));}
+          if(r.sabor) saboresData.push({sabor:r.sabor,overrun:c.overrun!=="-"?parseFloat(c.overrun):null,mermaFab:c.mermaFabPct!=="-"?parseFloat(c.mermaFabPct):null,litros:lS,kgFab:kF});
+        }
+      }
+      resultado.push({fecha:dia,litros,kgFab,kgMant,overruns,mermasFab,mermasMant,operarios,saboresData,turnos:turnos.length,horasTrabajadas});
+    }
+    setAnalisisDatos(resultado);setAnalisisLoading(false);
+  }
+
+  function handleLogout(){
+    setUser(null);setFichas({});setTurnoIdx(0);setAnalisisDatos([]);setAnalisisRan(false);
+    setAppReady(false);
+    setTimeout(async()=>{const u=await sget("bonber:users");if(u)setUsers(u);setAppReady(true);},100);
+  }
+
+  const ic={border:"1px solid #e5e7eb",borderRadius:4,padding:"4px 8px",fontSize:14,width:"100%"};
+  const thH={padding:"8px",fontSize:11,fontWeight:600,color:"#6b7280",textTransform:"uppercase",textAlign:"center"};
+
+  if(!fbReady||!appReady) return (
+    <div style={{minHeight:"100vh",background:"#111827",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12}}>
+      <span style={{fontWeight:900,fontSize:30,color:"#facc15"}}>BonBër</span>
+      <p style={{color:"#9ca3af",fontSize:14}}>Conectando...</p>
+    </div>
+  );
+  if(!user) return <Login users={users} onLogin={u=>{setUser(u);setTab("Producción");}}/>;
+
+  return (
+    <div style={{minHeight:"100vh",background:"#f9fafb"}}>
+      {showReporte&&<ReporteModal reportFecha={reportFecha} reportFichas={reportFichas} params={params} onClose={()=>setShowReporte(false)}/>}
+      {showAnalisisModal&&analisisModalData&&(
+        <AnalisisModal analisisDesde={analisisDesde} analisisHasta={analisisHasta}
+          kpis={analisisModalData.kpis} litrosXHora={analisisModalData.litrosXHora} kgFabXHora={analisisModalData.kgFabXHora}
+          operariosMap={analisisModalData.operariosMap} saboresMap={analisisModalData.saboresMap}
+          params={params} onClose={()=>setShowAnalisisModal(false)}/>
+      )}
+
+      {/* HEADER */}
+      <div style={{background:"#facc15",padding:"12px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8,boxShadow:"0 1px 3px rgba(0,0,0,0.1)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontWeight:900,fontSize:20,color:"#111"}}>BonBër</span>
+          <span style={{fontSize:11,fontWeight:600,background:"#fef08a",color:"#374151",borderRadius:4,padding:"2px 8px"}}>Producción</span>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+          {TABS.map(t=>(
+            <button key={t} onClick={()=>setTab(t)} style={{padding:"6px 12px",borderRadius:6,fontSize:13,fontWeight:600,border:"none",cursor:"pointer",background:tab===t?"#111":"#fde047",color:tab===t?"white":"#374151"}}>{t}</button>
+          ))}
+          <div style={{display:"flex",alignItems:"center",gap:8,background:"#fde047",borderRadius:6,padding:"6px 12px"}}>
+            <span style={{fontSize:12,fontWeight:500,color:"#374151"}}>{user.name||user.username}</span>
+            <button onClick={handleLogout} style={{fontSize:12,color:"#4b5563",background:"none",border:"none",cursor:"pointer",fontWeight:600}}>Salir</button>
+          </div>
+        </div>
+      </div>
+
+      <div style={{maxWidth:1152,margin:"0 auto",padding:"16px 8px"}}>
+
+        {/* ── PRODUCCIÓN ── */}
+        {tab==="Producción"&&(
+          <div>
+            {locked&&<div style={{marginBottom:12,background:"#fefce8",border:"1px solid #fde047",borderRadius:8,padding:"10px 16px",fontSize:14,color:"#854d0e",fontWeight:500}}>⚠️ Ingresá la hora de inicio para habilitar la carga de producción.</div>}
+            {fichaHoy.cerrado&&<div style={{marginBottom:12,background:"#fff7ed",border:"1px solid #fed7aa",borderRadius:8,padding:"10px 16px",fontSize:14,color:"#9a3412",fontWeight:500}}>🔒 Turno cerrado — ficha de solo lectura</div>}
+            {rows.some(r=>r.pendiente)&&!fichaHoy.cerrado&&(
+              <div style={{marginBottom:12,background:"#eff6ff",border:"1px solid #93c5fd",borderRadius:8,padding:"10px 16px",fontSize:14,color:"#1d4ed8",fontWeight:500}}>
+                📦 Hay base pendiente de mantecar de turnos anteriores. Los kg ya están precargados — completá los baldes.
+              </div>
+            )}
+            {erroresCierre.length>0&&(
+              <div style={{marginBottom:12,background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:8,padding:"12px 16px"}}>
+                <p style={{fontSize:14,fontWeight:700,color:"#b91c1c",margin:"0 0 4px"}}>⛔ No se puede cerrar el turno. Completá:</p>
+                {erroresCierre.map((e,i)=><p key={i} style={{fontSize:13,color:"#dc2626",margin:"2px 0"}}>• {e}</p>)}
+              </div>
+            )}
+            <div style={{display:"flex",flexWrap:"wrap",gap:12,alignItems:"flex-end",marginBottom:16}}>
+              <div><label style={{fontSize:11,color:"#6b7280",display:"block",marginBottom:2}}>Fecha</label>
+                <input type="date" value={fecha} onChange={e=>setFecha(e.target.value)} style={{border:"1px solid #e5e7eb",borderRadius:4,padding:"4px 8px",fontSize:14}}/></div>
+              <div><label style={{fontSize:11,color:"#6b7280",display:"block",marginBottom:2}}>Hora inicio</label>
+                <input type="time" value={fichaHoy.horaInicio||""} disabled={fichaHoy.cerrado} onChange={e=>persistFicha({...fichaHoy,horaInicio:e.target.value})} style={{border:"1px solid #e5e7eb",borderRadius:4,padding:"4px 8px",fontSize:14,background:fichaHoy.cerrado?"#f9fafb":"white"}}/></div>
+              <div><label style={{fontSize:11,color:"#6b7280",display:"block",marginBottom:2}}>Hora fin</label>
+                <input type="time" value={fichaHoy.horaFin||""} disabled={fichaHoy.cerrado} onChange={e=>persistFicha({...fichaHoy,horaFin:e.target.value})} style={{border:"1px solid #e5e7eb",borderRadius:4,padding:"4px 8px",fontSize:14,background:fichaHoy.cerrado?"#f9fafb":"white"}}/></div>
+              <div><label style={{fontSize:11,color:"#6b7280",display:"block",marginBottom:2}}>Fabricado por</label>
+                <input value={fichaHoy.operario||""} disabled={fichaHoy.cerrado} onChange={e=>persistFicha({...fichaHoy,operario:e.target.value})} placeholder="Nombre" style={{border:"1px solid #e5e7eb",borderRadius:4,padding:"4px 8px",fontSize:14,width:140,background:fichaHoy.cerrado?"#f9fafb":"white"}}/></div>
+              <div><label style={{fontSize:11,color:"#6b7280",display:"block",marginBottom:2}}>Mantecado por</label>
+                <input value={fichaHoy.mantecadoPor||""} disabled={fichaHoy.cerrado} onChange={e=>persistFicha({...fichaHoy,mantecadoPor:e.target.value})} placeholder="Nombre" style={{border:"1px solid #e5e7eb",borderRadius:4,padding:"4px 8px",fontSize:14,width:140,background:fichaHoy.cerrado?"#f9fafb":"white"}}/></div>
+              {saving&&<span style={{fontSize:12,color:"#ca8a04",alignSelf:"flex-end",paddingBottom:4,fontWeight:500}}>💾 Guardando...</span>}
+              {!fichaHoy.cerrado&&fichaHoy.horaInicio&&(
+                <div style={{marginLeft:"auto"}}>
+                  {confirmCierre?(
+                    <div style={{display:"flex",alignItems:"center",gap:8,background:"#fef2f2",border:"1px solid #fecaca",borderRadius:8,padding:"6px 12px"}}>
+                      <span style={{fontSize:13,color:"#b91c1c",fontWeight:500}}>¿Confirmar cierre?</span>
+                      <button onClick={cerrarTurno} style={{background:"#ef4444",color:"white",fontWeight:600,padding:"4px 12px",borderRadius:6,border:"none",cursor:"pointer",fontSize:13}}>Sí, cerrar</button>
+                      <button onClick={()=>{setConfirmCierre(false);setErroresCierre([]);}} style={{background:"#e5e7eb",color:"#374151",fontWeight:600,padding:"4px 12px",borderRadius:6,border:"none",cursor:"pointer",fontSize:13}}>Cancelar</button>
+                    </div>
+                  ):(
+                    <button onClick={intentarCerrar} style={{background:"#ef4444",color:"white",fontWeight:600,padding:"6px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:13}}>🔒 Cerrar turno</button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div style={{background:"white",borderRadius:12,boxShadow:"0 1px 3px rgba(0,0,0,0.1)",overflowX:"auto",opacity:locked?0.4:1,pointerEvents:locked?"none":"auto"}}>
+              <table style={{width:"100%",fontSize:14,borderCollapse:"collapse"}}>
+                <thead style={{background:"#f9fafb",borderBottom:"1px solid #e5e7eb"}}>
+                  <tr>{["Sabor","Kg Fab.","Kg Mant.","Merma Fab%","Balde 3L","Balde 5L","Litros","Overrun%","Merma Mant%","Obs.",""].map(h=>(
+                    <th key={h} style={thH}>{h}</th>
+                  ))}</tr>
+                </thead>
+                <tbody>
+                  {rows.map(r=>{
+                    const c=calcRow(r);
+                    const ov=parseFloat(c.overrun);
+                    const ovAlert=!isNaN(ov)&&ov>params.overrunMax;
+                    const ovBajo=!isNaN(ov)&&ov<(params.overrunMin||0);
+                    const sp=params.sabores.find(s=>s.nombre===r.sabor);
+                    const ovWarn=!isNaN(ov)&&sp&&ov>sp.overrunObj&&!ovAlert;
+                    const ovColor=ovAlert?"#dc2626":ovBajo?"#2563eb":ovWarn?"#ea580c":"#16a34a";
+                    const incompleta=!r.pendiente&&r.sabor.trim()&&(!r.kgFab||!r.kgMant||(r.balde3===""&&r.balde5===""));
+                    const saboresUsados=rows.filter(x=>x.id!==r.id&&x.sabor).map(x=>x.sabor);
+                    const saboresFiltrados=params.sabores.filter(s=>!saboresUsados.includes(s.nombre));
+                    const rowBg=r.pendiente?"#eff6ff":incompleta?"#fef2f2":"white";
+                    return (
+                      <tr key={r.id} style={{borderBottom:"1px solid #f3f4f6",background:rowBg}}>
+                        <td style={{padding:"6px 8px",minWidth:150}}>
+                          {r.pendiente?(
+                            <div style={{display:"flex",alignItems:"center",gap:6}}>
+                              <span style={{fontSize:11,background:"#dbeafe",color:"#1d4ed8",fontWeight:700,padding:"2px 6px",borderRadius:4,whiteSpace:"nowrap"}}>📦 Pendiente</span>
+                              <span style={{fontSize:13,fontWeight:600,color:"#1d4ed8"}}>{r.sabor}</span>
+                            </div>
+                          ):(
+                            <>
+                              <input list={`sl-${r.id}`} value={r.sabor} disabled={fichaHoy.cerrado} onChange={e=>updateRow(r.id,"sabor",e.target.value)} placeholder="Sabor..." style={{...ic,background:fichaHoy.cerrado?"#f9fafb":"white"}}/>
+                              <datalist id={`sl-${r.id}`}>{saboresFiltrados.map(s=><option key={s.nombre} value={s.nombre}/>)}</datalist>
+                            </>
+                          )}
+                        </td>
+                        <td style={{padding:"6px 8px",width:80}}>
+                          <input type="number" min="0" step="0.01" value={r.kgFab} disabled={fichaHoy.cerrado||r.pendiente} onChange={e=>updateRow(r.id,"kgFab",e.target.value)} style={{...ic,background:(fichaHoy.cerrado||r.pendiente)?"#f9fafb":"white"}}/>
+                        </td>
+                        <td style={{padding:"6px 8px",width:80}}>
+                          <input type="number" min="0" step="0.01" value={r.kgMant} disabled={fichaHoy.cerrado||r.pendiente} onChange={e=>updateRow(r.id,"kgMant",e.target.value)} style={{...ic,background:(fichaHoy.cerrado||r.pendiente)?"#dbeafe":"white",fontWeight:r.pendiente?"700":"normal",color:r.pendiente?"#1d4ed8":"inherit"}}/>
+                        </td>
+                        <td style={{padding:"6px 8px",textAlign:"center",fontWeight:500,color:"#374151",whiteSpace:"nowrap"}}>{c.mermaFabPct}{c.mermaFabPct!=="-"?"%":""}</td>
+                        {["balde3","balde5"].map(f=>(
+                          <td key={f} style={{padding:"6px 8px",width:80}}>
+                            <input type="number" min="0" step="1" value={r[f]} disabled={fichaHoy.cerrado} onChange={e=>updateRow(r.id,f,e.target.value)} style={{...ic,background:fichaHoy.cerrado?"#f9fafb":"white"}}/>
+                          </td>
+                        ))}
+                        <td style={{padding:"6px 8px",textAlign:"center",fontWeight:600,color:"#2563eb",whiteSpace:"nowrap"}}>{c.litrosStock>0?c.litrosStock.toFixed(1)+" L":"-"}</td>
+                        <td style={{padding:"6px 8px",textAlign:"center",whiteSpace:"nowrap"}}>
+                          <span style={{fontWeight:700,color:ovColor}}>{c.overrun}{c.overrun!=="-"?"%":""}{ovAlert?" ⚠️":""}{ovBajo?" ↓":""}</span>
+                        </td>
+                        <td style={{padding:"6px 8px",textAlign:"center",color:"#4b5563",whiteSpace:"nowrap"}}>{c.mermaMantPct}{c.mermaMantPct!=="-"?"%":""}</td>
+                        <td style={{padding:"6px 8px"}}>
+                          <input value={r.obs} disabled={fichaHoy.cerrado} onChange={e=>updateRow(r.id,"obs",e.target.value)} style={{...ic,background:fichaHoy.cerrado?"#f9fafb":"white"}} placeholder="..."/>
+                        </td>
+                        <td style={{padding:"6px 8px"}}>
+                          {!fichaHoy.cerrado&&!r.pendiente&&rows.length>1&&(
+                            <button onClick={()=>removeRow(r.id)} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"#d1d5db"}}>×</button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div style={{display:"flex",gap:12,marginTop:12,flexWrap:"wrap",alignItems:"center",opacity:locked?0.4:1,pointerEvents:locked?"none":"auto"}}>
+              {!fichaHoy.cerrado&&<button onClick={addRow} style={{background:"#facc15",color:"#111",fontWeight:600,padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:13}}>+ Agregar sabor</button>}
+              <div style={{display:"flex",gap:12,marginLeft:"auto",flexWrap:"wrap"}}>
+                {[["Kg Fab.",totKgFab.toFixed(2)+" kg",""],["Kg Mant.",totKgMant.toFixed(2)+" kg",""],["Litros",totLitros.toFixed(2)+" L",""],
+                  ["Overrun",overrunTotal+(overrunTotal!=="-"?"%":""),parseFloat(overrunTotal)>params.overrunMax?"red":"green"]
+                ].map(([l,v,c])=>(
+                  <div key={l} style={{borderRadius:8,padding:"8px 16px",boxShadow:"0 1px 3px rgba(0,0,0,0.1)",textAlign:"center",background:c==="red"?"#fef2f2":c==="green"?"#f0fdf4":"white"}}>
+                    <div style={{fontSize:11,color:"#9ca3af"}}>{l}</div>
+                    <div style={{fontWeight:700,fontSize:14,color:c==="red"?"#dc2626":c==="green"?"#16a34a":"#111"}}>{v}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── REPORTES ── */}
+        {tab==="Reportes"&&isAdmin&&(
+          <div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:12,alignItems:"flex-end",marginBottom:16}}>
+              <div><label style={{fontSize:11,color:"#6b7280",display:"block",marginBottom:2}}>Fecha</label>
+                <input type="date" value={reportFecha} onChange={e=>setReportFecha(e.target.value)} style={{border:"1px solid #e5e7eb",borderRadius:4,padding:"4px 8px",fontSize:14}}/></div>
+              {reportLoading&&<span style={{fontSize:12,color:"#9ca3af",alignSelf:"flex-end",paddingBottom:4}}>Cargando...</span>}
+              <button onClick={cargarReportFichas} disabled={reportLoading} style={{background:"#f3f4f6",color:"#374151",fontWeight:600,padding:"8px 12px",borderRadius:8,border:"1px solid #e5e7eb",cursor:"pointer",fontSize:13}}>🔄 Actualizar</button>
+              <button onClick={()=>setShowReporte(true)} disabled={!reportFichas.length||reportLoading} style={{background:"#111",color:"white",fontWeight:600,padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:13,opacity:(!reportFichas.length||reportLoading)?0.4:1}}>📋 Ver / Imprimir ficha</button>
+            </div>
+
+            {!reportLoading&&reportFichas.length>0?(
+              <div style={{display:"flex",flexDirection:"column",gap:16}}>
+                {reportFichas.map((ficha,ti)=>{
+                  const rs=ficha.rows||[];
+                  const tF=rs.reduce((s,r)=>s+(parseFloat(r.kgFab)||0),0);
+                  const tM=rs.reduce((s,r)=>s+(parseFloat(r.kgMant)||0),0);
+                  const tL=rs.reduce((s,r)=>s+calcRow(r).litrosStock,0);
+                  const ovT=tM>0?(((tL-tM)/tM)*100).toFixed(1):"-";
+                  const enEdicion=editandoTurno===ficha._key;
+                  return (
+                    <div key={ficha._key} style={{background:"white",borderRadius:12,boxShadow:"0 1px 3px rgba(0,0,0,0.1)",padding:16}}>
+                      <div style={{display:"flex",flexWrap:"wrap",gap:10,marginBottom:12,fontSize:14,alignItems:"center"}}>
+                        <span style={{fontWeight:900,color:"#111"}}>Turno {ti+1}</span>
+                        {enEdicion?(
+                          <>
+                            {[["horaInicio","Inicio"],["horaFin","Fin"]].map(([field,label])=>(
+                              <div key={field}>
+                                <label style={{fontSize:11,color:"#6b7280",display:"block",marginBottom:2}}>{label}</label>
+                                <input type="time" value={ficha[field]||""} onChange={e=>{
+                                  const updated={...ficha,[field]:e.target.value};
+                                  setReportFichas(prev=>prev.map(f=>f._key===ficha._key?{...updated,_key:f._key,_idx:f._idx}:f));
+                                  sset(ficha._key,updated);
+                                }} style={{border:"1px solid #facc15",borderRadius:4,padding:"3px 6px",fontSize:13}}/>
+                              </div>
+                            ))}
+                            {[["operario","Fabricado por"],["mantecadoPor","Mantecado por"]].map(([field,label])=>(
+                              <div key={field}>
+                                <label style={{fontSize:11,color:"#6b7280",display:"block",marginBottom:2}}>{label}</label>
+                                <input value={ficha[field]||""} onChange={e=>{
+                                  const updated={...ficha,[field]:e.target.value};
+                                  setReportFichas(prev=>prev.map(f=>f._key===ficha._key?{...updated,_key:f._key,_idx:f._idx}:f));
+                                  sset(ficha._key,updated);
+                                }} style={{border:"1px solid #facc15",borderRadius:4,padding:"3px 6px",fontSize:13,width:130}}/>
+                              </div>
+                            ))}
+                            <button onClick={()=>guardarEdicionTurno(ficha._key,ficha)} style={{marginLeft:"auto",background:"#111",color:"white",fontWeight:600,padding:"6px 14px",borderRadius:8,border:"none",cursor:"pointer",fontSize:13}}>💾 Guardar y cerrar</button>
+                          </>
+                        ):(
+                          <>
+                            {ficha.horaInicio&&<span style={{color:"#6b7280"}}>Inicio: <strong>{ficha.horaInicio}</strong></span>}
+                            {ficha.horaFin&&<span style={{color:"#6b7280"}}>Fin: <strong>{ficha.horaFin}</strong></span>}
+                            {ficha.operario&&<span style={{color:"#6b7280"}}>Fab: <strong>{ficha.operario}</strong></span>}
+                            {ficha.mantecadoPor&&<span style={{color:"#6b7280"}}>Mant: <strong>{ficha.mantecadoPor}</strong></span>}
+                            <span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:99,background:ficha.cerrado?"#fff7ed":"#f0fdf4",color:ficha.cerrado?"#9a3412":"#166534"}}>{ficha.cerrado?"🔒 Cerrado":"🟢 Abierto"}</span>
+                            <div style={{marginLeft:"auto",display:"flex",gap:8,flexWrap:"wrap"}}>
+                              <button onClick={()=>setEditandoTurno(ficha._key)} style={{background:"none",border:"1px solid #93c5fd",color:"#2563eb",fontWeight:600,padding:"4px 10px",borderRadius:6,cursor:"pointer",fontSize:12}}>✏️ Editar</button>
+                              {confirmDeleteTurno===ficha._key?(
+                                confirmDeleteStep===1?(
+                                  <div style={{display:"flex",alignItems:"center",gap:6,background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:8,padding:"4px 10px"}}>
+                                    <span style={{fontSize:12,color:"#b91c1c",fontWeight:500}}>¿Eliminar?</span>
+                                    <button onClick={()=>setConfirmDeleteStep(2)} style={{background:"#ef4444",color:"white",fontWeight:600,padding:"3px 8px",borderRadius:6,border:"none",cursor:"pointer",fontSize:12}}>Sí</button>
+                                    <button onClick={()=>{setConfirmDeleteTurno(null);setConfirmDeleteStep(0);}} style={{background:"#e5e7eb",color:"#374151",fontWeight:600,padding:"3px 8px",borderRadius:6,border:"none",cursor:"pointer",fontSize:12}}>No</button>
+                                  </div>
+                                ):(
+                                  <div style={{display:"flex",alignItems:"center",gap:6,background:"#fef2f2",border:"2px solid #ef4444",borderRadius:8,padding:"4px 10px"}}>
+                                    <span style={{fontSize:11,color:"#b91c1c",fontWeight:700}}>⚠️ No se puede deshacer</span>
+                                    <button onClick={()=>eliminarTurno(ficha._key)} style={{background:"#b91c1c",color:"white",fontWeight:700,padding:"3px 8px",borderRadius:6,border:"none",cursor:"pointer",fontSize:12}}>Confirmar</button>
+                                    <button onClick={()=>{setConfirmDeleteTurno(null);setConfirmDeleteStep(0);}} style={{background:"#e5e7eb",color:"#374151",fontWeight:600,padding:"3px 8px",borderRadius:6,border:"none",cursor:"pointer",fontSize:12}}>Cancelar</button>
+                                  </div>
+                                )
+                              ):(
+                                <button onClick={()=>{setConfirmDeleteTurno(ficha._key);setConfirmDeleteStep(1);}} style={{background:"none",border:"1px solid #fca5a5",color:"#dc2626",fontWeight:600,padding:"4px 10px",borderRadius:6,cursor:"pointer",fontSize:12}}>🗑️ Eliminar</button>
+                              )}
+                            </div>
+                          </>
+                        )}
+                      </div>
+
+                      {enEdicion?(
+                        <div>
+                          <div style={{overflowX:"auto"}}>
+                            <table style={{width:"100%",fontSize:13,borderCollapse:"collapse"}}>
+                              <thead style={{background:"#fefce8"}}><tr>{["Sabor","Kg Fab.","Kg Mant.","Merma%","Balde 3L","Balde 5L","Litros","Overrun%","Merma Mant%","Obs.",""].map(h=>(
+                                <th key={h} style={{border:"1px solid #e5e7eb",padding:"6px 8px",fontSize:11,fontWeight:600,color:"#4b5563",textAlign:"center"}}>{h}</th>
+                              ))}</tr></thead>
+                              <tbody>{(ficha.rows||[]).map((r,ri)=>{
+                                const c=calcRow(r);const ov=parseFloat(c.overrun);const ovAlert=!isNaN(ov)&&ov>params.overrunMax;
+                                const saboresUsados=(ficha.rows||[]).filter(x=>x.id!==r.id&&x.sabor).map(x=>x.sabor);
+                                const saboresFiltrados=params.sabores.filter(s=>!saboresUsados.includes(s.nombre));
+                                const icc={border:"1px solid #e5e7eb",borderRadius:4,padding:"3px 6px",fontSize:13,width:"100%"};
+                                return (
+                                  <tr key={r.id} style={{background:ri%2===0?"#fffbeb":"#fefce8"}}>
+                                    <td style={{padding:"4px 6px",minWidth:130}}>
+                                      <input list={`rsl-${r.id}`} value={r.sabor} onChange={e=>updateReportRow(ficha._key,ficha,r.id,"sabor",e.target.value)} style={icc} placeholder="Sabor..."/>
+                                      <datalist id={`rsl-${r.id}`}>{saboresFiltrados.map(s=><option key={s.nombre} value={s.nombre}/>)}</datalist>
+                                    </td>
+                                    {["kgFab","kgMant"].map(f=>(
+                                      <td key={f} style={{padding:"4px 6px",width:75}}>
+                                        <input type="number" min="0" step="0.01" value={r[f]} onChange={e=>updateReportRow(ficha._key,ficha,r.id,f,e.target.value)} style={icc}/>
+                                      </td>
+                                    ))}
+                                    <td style={{padding:"4px 6px",textAlign:"center",color:"#374151"}}>{c.mermaFabPct}{c.mermaFabPct!=="-"?"%":""}</td>
+                                    {["balde3","balde5"].map(f=>(
+                                      <td key={f} style={{padding:"4px 6px",width:75}}>
+                                        <input type="number" min="0" step="1" value={r[f]} onChange={e=>updateReportRow(ficha._key,ficha,r.id,f,e.target.value)} style={icc}/>
+                                      </td>
+                                    ))}
+                                    <td style={{padding:"4px 6px",textAlign:"center",fontWeight:600,color:"#2563eb"}}>{c.litrosStock>0?c.litrosStock.toFixed(1)+" L":"-"}</td>
+                                    <td style={{padding:"4px 6px",textAlign:"center",fontWeight:700,color:ovAlert?"#dc2626":"#16a34a"}}>{c.overrun}{c.overrun!=="-"?"%":""}{ovAlert?" ⚠️":""}</td>
+                                    <td style={{padding:"4px 6px",textAlign:"center",color:"#4b5563"}}>{c.mermaMantPct}{c.mermaMantPct!=="-"?"%":""}</td>
+                                    <td style={{padding:"4px 6px"}}><input value={r.obs} onChange={e=>updateReportRow(ficha._key,ficha,r.id,"obs",e.target.value)} style={icc} placeholder="..."/></td>
+                                    <td style={{padding:"4px 6px"}}>
+                                      {(ficha.rows||[]).length>1&&<button onClick={()=>removeReportRow(ficha._key,ficha,r.id)} style={{background:"none",border:"none",fontSize:18,cursor:"pointer",color:"#d1d5db"}}>×</button>}
+                                    </td>
+                                  </tr>
+                                );
+                              })}</tbody>
+                            </table>
+                          </div>
+                          <button onClick={()=>addReportRow(ficha._key,ficha)} style={{marginTop:8,background:"#facc15",color:"#111",fontWeight:600,padding:"6px 14px",borderRadius:8,border:"none",cursor:"pointer",fontSize:13}}>+ Agregar fila</button>
+                        </div>
+                      ):(
+                        <div style={{overflowX:"auto"}}>
+                          <table style={{width:"100%",fontSize:13,borderCollapse:"collapse"}}>
+                            <thead style={{background:"#f9fafb"}}><tr>{["Sabor","Kg Fab.","Kg Mant.","Merma Fab%","Balde 3L","Balde 5L","Litros","Overrun%","Merma Mant%","Obs."].map(h=>(
+                              <th key={h} style={{border:"1px solid #e5e7eb",padding:"6px 8px",fontSize:11,fontWeight:600,color:"#4b5563",textAlign:"center"}}>{h}</th>
+                            ))}</tr></thead>
+                            <tbody>{rs.map((r,i)=>{
+                              const c=calcRow(r);const ov=parseFloat(c.overrun);const ovAlert=!isNaN(ov)&&ov>params.overrunMax;
+                              return (
+                                <tr key={i} style={{background:r.pendiente?"#eff6ff":i%2===0?"white":"#f9fafb"}}>
+                                  <td style={{border:"1px solid #e5e7eb",padding:"4px 8px",fontWeight:500,color:r.pendiente?"#1d4ed8":"inherit"}}>{r.pendiente?"📦 ":""}{r.sabor}</td>
+                                  <td style={{border:"1px solid #e5e7eb",padding:"4px 8px",textAlign:"center"}}>{r.kgFab}</td>
+                                  <td style={{border:"1px solid #e5e7eb",padding:"4px 8px",textAlign:"center"}}>{r.kgMant}</td>
+                                  <td style={{border:"1px solid #e5e7eb",padding:"4px 8px",textAlign:"center"}}>{c.mermaFabPct}{c.mermaFabPct!=="-"?"%":""}</td>
+                                  <td style={{border:"1px solid #e5e7eb",padding:"4px 8px",textAlign:"center"}}>{r.balde3}</td>
+                                  <td style={{border:"1px solid #e5e7eb",padding:"4px 8px",textAlign:"center"}}>{r.balde5}</td>
+                                  <td style={{border:"1px solid #e5e7eb",padding:"4px 8px",textAlign:"center"}}>{c.litrosStock>0?c.litrosStock.toFixed(1)+" L":"-"}</td>
+                                  <td style={{border:"1px solid #e5e7eb",padding:"4px 8px",textAlign:"center",fontWeight:700,color:ovAlert?"#dc2626":"#16a34a"}}>{c.overrun}{c.overrun!=="-"?"%":""}{ovAlert?" ⚠️":""}</td>
+                                  <td style={{border:"1px solid #e5e7eb",padding:"4px 8px",textAlign:"center"}}>{c.mermaMantPct}{c.mermaMantPct!=="-"?"%":""}</td>
+                                  <td style={{border:"1px solid #e5e7eb",padding:"4px 8px",fontSize:11,color:"#6b7280"}}>{r.obs}</td>
+                                </tr>
+                              );
+                            })}</tbody>
+                          </table>
+                        </div>
+                      )}
+
+                      {!enEdicion&&(
+                        <div style={{marginTop:8,display:"flex",gap:12,flexWrap:"wrap"}}>
+                          {[["Kg Fab.",tF.toFixed(2)+" kg"],["Kg Mant.",tM.toFixed(2)+" kg"],["Litros",tL.toFixed(2)+" L"]].map(([l,v])=>(
+                            <div key={l} style={{background:"#f9fafb",border:"1px solid #e5e7eb",borderRadius:4,padding:"6px 12px",fontSize:13}}><span style={{color:"#9ca3af"}}>{l} </span><strong>{v}</strong></div>
+                          ))}
+                          <div style={{border:"1px solid",borderColor:parseFloat(ovT)>params.overrunMax?"#fca5a5":"#bbf7d0",borderRadius:4,padding:"6px 12px",fontSize:13,background:parseFloat(ovT)>params.overrunMax?"#fef2f2":"#f0fdf4"}}>
+                            <span style={{color:"#9ca3af"}}>Overrun: </span><strong style={{color:parseFloat(ovT)>params.overrunMax?"#dc2626":"#16a34a"}}>{ovT}{ovT!=="-"?"%":""}</strong>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ):(!reportLoading&&<div style={{color:"#9ca3af",textAlign:"center",padding:"48px 0"}}>No hay datos para esa fecha.</div>)}
+
+            {fichaKeys.length>0&&(
+              <div style={{marginTop:20}}>
+                <h3 style={{fontSize:13,fontWeight:600,color:"#4b5563",marginBottom:8}}>Fichas registradas</h3>
+                <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                  {fichaKeys.map(f=>(
+                    <button key={f} onClick={()=>setReportFecha(f)} style={{padding:"6px 12px",borderRadius:8,fontSize:13,border:"none",cursor:"pointer",background:f===reportFecha?"#facc15":"white",fontWeight:f===reportFecha?700:400,boxShadow:"0 1px 3px rgba(0,0,0,0.1)"}}>{f}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── ANÁLISIS ── */}
+        {tab==="Análisis"&&isAdmin&&(()=>{
+          const avg=arr=>arr.length>0?(arr.reduce((a,b)=>a+b,0)/arr.length):null;
+          const fmt=v=>v!=null?v.toFixed(1):"-";
+          const diasConDatos=analisisDatos.filter(d=>d.litros>0||d.kgFab>0);
+          const semaforoOverrun=v=>{
+            if(v==null) return {label:"Sin datos",bg:"#f3f4f6",tc:"#6b7280"};
+            if(v>params.overrunMax) return {label:"Alto ⚠️",bg:"#fee2e2",tc:"#b91c1c"};
+            if(v<(params.overrunMin||0)) return {label:"Bajo ↓",bg:"#dbeafe",tc:"#1d4ed8"};
+            if(Math.abs(v-(params.overrunIdeal||25))<=3) return {label:"Ideal ✓",bg:"#dcfce7",tc:"#166534"};
+            if(v>params.overrunMax*0.85) return {label:"Atención",bg:"#ffedd5",tc:"#9a3412"};
+            return {label:"OK ✓",bg:"#dcfce7",tc:"#166534"};
+          };
+          const semaforoMerma=(v,max)=>{
+            if(v==null) return {bg:"#f3f4f6",tc:"#6b7280",label:"Sin datos"};
+            if(v>max) return {bg:"#fee2e2",tc:"#b91c1c",label:"Alta ⚠️"};
+            if(v>max*0.75) return {bg:"#ffedd5",tc:"#9a3412",label:"Atención"};
+            return {bg:"#dcfce7",tc:"#166534",label:"OK ✓"};
+          };
+          const totLitros=diasConDatos.reduce((s,d)=>s+d.litros,0);
+          const totKgFabA=diasConDatos.reduce((s,d)=>s+d.kgFab,0);
+          const totHoras=diasConDatos.reduce((s,d)=>s+(d.horasTrabajadas||0),0);
+          const litrosXHora=totHoras>0?totLitros/totHoras:null;
+          const kgFabXHora=totHoras>0&&totKgFabA>0?totKgFabA/totHoras:null;
+          const allOverruns=analisisDatos.flatMap(d=>d.overruns);
+          const allMermasFab=analisisDatos.flatMap(d=>d.mermasFab);
+          const allMermasMant=analisisDatos.flatMap(d=>d.mermasMant);
+          const avgOverrun=avg(allOverruns),avgMermaFab=avg(allMermasFab),avgMermaMant=avg(allMermasMant);
+          const so=semaforoOverrun(avgOverrun),smf=semaforoMerma(avgMermaFab,15),smm=semaforoMerma(avgMermaMant,20);
+          const operariosMap={};
+          for(const d of analisisDatos) for(const [op,v] of Object.entries(d.operarios||{})){
+            if(!operariosMap[op]) operariosMap[op]={kgFab:0,kgMant:0,litros:0,overruns:[],mermasFab:[],mermasMant:[],turnos:0,horas:0};
+            operariosMap[op].kgFab+=v.kgFab;operariosMap[op].kgMant+=v.kgMant;operariosMap[op].litros+=v.litros;
+            operariosMap[op].overruns.push(...v.overruns);operariosMap[op].mermasFab.push(...v.mermasFab);
+            operariosMap[op].mermasMant.push(...v.mermasMant);operariosMap[op].turnos+=v.turnos;operariosMap[op].horas+=(v.horas||0);
+          }
+          const saboresMap={};
+          for(const d of analisisDatos) for(const s of (d.saboresData||[])){
+            if(!saboresMap[s.sabor]) saboresMap[s.sabor]={litros:0,kgFab:0,overruns:[],mermasFab:[]};
+            saboresMap[s.sabor].litros+=s.litros;saboresMap[s.sabor].kgFab+=s.kgFab;
+            if(s.overrun!=null) saboresMap[s.sabor].overruns.push(s.overrun);
+            if(s.mermaFab!=null) saboresMap[s.sabor].mermasFab.push(s.mermaFab);
+          }
+          const chartData=analisisDatos.map(d=>({fecha:d.fecha.slice(5),litros:parseFloat(d.litros.toFixed(1)),overrun:avg(d.overruns)!=null?parseFloat(avg(d.overruns).toFixed(1)):null}));
+          const W=560,H=140,PAD={t:10,r:10,b:30,l:40};
+          const cw=W-PAD.l-PAD.r,ch=H-PAD.t-PAD.b;
+          const maxLit=Math.max(...chartData.map(d=>d.litros),1);
+          const maxOv=Math.max(...chartData.map(d=>d.overrun||0),params.overrunMax,1);
+          const n=chartData.length-1||1;
+          const pts=chartData.map((d,i)=>({x:PAD.l+i*(cw/n),y:PAD.t+ch-(d.litros/maxLit)*ch,v:d.litros,f:d.fecha}));
+          const polyline=pts.map(p=>`${p.x},${p.y}`).join(" ");
+          const ovPts=chartData.map((d,i)=>({x:PAD.l+i*(cw/n),y:PAD.t+ch-((d.overrun||0)/maxOv)*ch,v:d.overrun}));
+          const ovLine=ovPts.filter(p=>p.v!=null).map(p=>`${p.x},${p.y}`).join(" ");
+          const maxLineY=PAD.t+ch-(params.overrunMax/maxOv)*ch;
+          const kpis={totLitros,totKgFab:totKgFabA,avgOverrun:avgOverrun!=null?parseFloat(avgOverrun.toFixed(1)):null,avgMermaFab:avgMermaFab!=null?parseFloat(avgMermaFab.toFixed(1)):null,avgMermaMant:avgMermaMant!=null?parseFloat(avgMermaMant.toFixed(1)):null};
+
+          return (
+            <div style={{display:"flex",flexDirection:"column",gap:20}}>
+              <div style={{display:"flex",flexWrap:"wrap",gap:12,alignItems:"flex-end"}}>
+                {[["Desde",analisisDesde,e=>setAnalisisDesde(e.target.value)],["Hasta",analisisHasta,e=>setAnalisisHasta(e.target.value)]].map(([l,v,fn])=>(
+                  <div key={l}><label style={{fontSize:11,color:"#6b7280",display:"block",marginBottom:2}}>{l}</label>
+                    <input type="date" value={v} onChange={fn} style={{border:"1px solid #e5e7eb",borderRadius:4,padding:"4px 8px",fontSize:14}}/></div>
+                ))}
+                <button onClick={correrAnalisis} disabled={analisisLoading} style={{background:"#facc15",color:"#111",fontWeight:600,padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:13,opacity:analisisLoading?0.5:1}}>
+                  {analisisLoading?"⏳ Cargando...":"🔍 Analizar período"}
+                </button>
+                {!analisisLoading&&diasConDatos.length>0&&(
+                  <button onClick={()=>{setAnalisisModalData({kpis,litrosXHora,kgFabXHora,operariosMap,saboresMap});setShowAnalisisModal(true);}} style={{background:"#111",color:"white",fontWeight:600,padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:13}}>📋 Ver / Imprimir</button>
+                )}
+              </div>
+
+              {!analisisRan?(
+                <div style={{color:"#9ca3af",textAlign:"center",padding:"64px 0"}}>Seleccioná un rango y presioná <strong>Analizar período</strong>.</div>
+              ):diasConDatos.length===0&&!analisisLoading?(
+                <div style={{color:"#9ca3af",textAlign:"center",padding:"64px 0"}}>No hay datos en ese rango.</div>
+              ):(
+                <div style={{display:"flex",flexDirection:"column",gap:20}}>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:12}}>
+                    {[
+                      {l:"Kg fab. totales",v:totKgFabA.toFixed(1)+" kg",bg:"#f0fdf4",tc:"#166534",badge:null},
+                      {l:"Litros totales",v:totLitros.toFixed(1)+" L",bg:"#eff6ff",tc:"#1d4ed8",badge:null},
+                      {l:"Kg fab./hora",v:kgFabXHora!=null?kgFabXHora.toFixed(1)+" kg/h":"-",bg:"#f0fdf4",tc:"#166534",badge:null},
+                      {l:"L/hora promedio",v:litrosXHora!=null?litrosXHora.toFixed(1)+" L/h":"-",bg:"#eef2ff",tc:"#4338ca",badge:null},
+                      {l:"Merma fab. prom.",v:fmt(avgMermaFab)+"%",bg:smf.bg,tc:smf.tc,badge:smf.label},
+                      {l:"Merma mant. prom.",v:fmt(avgMermaMant)+"%",bg:smm.bg,tc:smm.tc,badge:smm.label},
+                    ].map(({l,v,bg,tc,badge})=>(
+                      <div key={l} style={{borderRadius:12,padding:12,boxShadow:"0 1px 3px rgba(0,0,0,0.1)",background:bg}}>
+                        <div style={{fontSize:11,color:"#6b7280",marginBottom:4}}>{l}</div>
+                        <div style={{fontWeight:900,fontSize:20,color:tc}}>{v}</div>
+                        {badge&&<span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:99,marginTop:4,display:"inline-block",background:"rgba(255,255,255,0.6)",color:tc}}>{badge}</span>}
+                      </div>
+                    ))}
+                  </div>
+
+                  {chartData.length>1&&(
+                    <div style={{background:"white",borderRadius:12,boxShadow:"0 1px 3px rgba(0,0,0,0.1)",padding:16}}>
+                      <h3 style={{fontWeight:700,fontSize:14,margin:"0 0 12px"}}>📈 Litros producidos por día</h3>
+                      <div style={{overflowX:"auto"}}>
+                        <svg width={W} height={H} style={{minWidth:300,maxWidth:"100%"}}>
+                          {[0,0.25,0.5,0.75,1].map(f=>{const y=PAD.t+ch*(1-f);return <g key={f}><line x1={PAD.l} x2={W-PAD.r} y1={y} y2={y} stroke="#f0f0f0" strokeWidth="1"/><text x={PAD.l-4} y={y+4} fontSize="9" fill="#aaa" textAnchor="end">{(maxLit*f).toFixed(0)}</text></g>;})}
+                          <polyline points={polyline} fill="none" stroke="#3b82f6" strokeWidth="2.5" strokeLinejoin="round"/>
+                          {pts.map((p,i)=><g key={i}><circle cx={p.x} cy={p.y} r="4" fill="#3b82f6"/><text x={p.x} y={H-PAD.b+12} fontSize="8" fill="#888" textAnchor="middle">{p.f}</text>{p.v>0&&<text x={p.x} y={p.y-7} fontSize="8" fill="#3b82f6" textAnchor="middle">{p.v}L</text>}</g>)}
+                        </svg>
+                      </div>
+                    </div>
+                  )}
+                  {chartData.length>1&&ovLine&&(
+                    <div style={{background:"white",borderRadius:12,boxShadow:"0 1px 3px rgba(0,0,0,0.1)",padding:16}}>
+                      <h3 style={{fontWeight:700,fontSize:14,margin:"0 0 4px"}}>📈 Overrun promedio por día</h3>
+                      <p style={{fontSize:11,color:"#9ca3af",margin:"0 0 12px"}}>Línea roja punteada = máximo ({params.overrunMax}%)</p>
+                      <div style={{overflowX:"auto"}}>
+                        <svg width={W} height={H} style={{minWidth:300,maxWidth:"100%"}}>
+                          {[0,0.25,0.5,0.75,1].map(f=>{const y=PAD.t+ch*(1-f);return <g key={f}><line x1={PAD.l} x2={W-PAD.r} y1={y} y2={y} stroke="#f0f0f0" strokeWidth="1"/><text x={PAD.l-4} y={y+4} fontSize="9" fill="#aaa" textAnchor="end">{(maxOv*f).toFixed(0)}</text></g>;})}
+                          <line x1={PAD.l} x2={W-PAD.r} y1={maxLineY} y2={maxLineY} stroke="#ef4444" strokeWidth="1.5" strokeDasharray="5,3"/>
+                          <polyline points={ovLine} fill="none" stroke="#f59e0b" strokeWidth="2.5" strokeLinejoin="round"/>
+                          {ovPts.filter(p=>p.v!=null).map((p,i)=><g key={i}><circle cx={p.x} cy={p.y} r="4" fill={p.v>params.overrunMax?"#ef4444":"#f59e0b"}/><text x={p.x} y={H-PAD.b+12} fontSize="8" fill="#888" textAnchor="middle">{chartData[i]?.fecha||""}</text>{p.v!=null&&<text x={p.x} y={p.y-7} fontSize="8" fill={p.v>params.overrunMax?"#ef4444":"#f59e0b"} textAnchor="middle">{p.v}%</text>}</g>)}
+                        </svg>
+                      </div>
+                    </div>
+                  )}
+                  {Object.keys(operariosMap).length>0&&(
+                    <div style={{background:"white",borderRadius:12,boxShadow:"0 1px 3px rgba(0,0,0,0.1)",padding:16}}>
+                      <h3 style={{fontWeight:700,fontSize:14,margin:"0 0 12px"}}>👷 Rendimiento por operario</h3>
+                      <div style={{overflowX:"auto"}}>
+                        <table style={{width:"100%",fontSize:13,borderCollapse:"collapse"}}>
+                          <thead style={{background:"#f9fafb",borderBottom:"1px solid #e5e7eb"}}><tr>{["Operario","Turnos","Horas","Kg Fab.","Kg/hora","Litros","L/hora","Overrun","Merma Fab","Merma Mant"].map(h=><th key={h} style={{padding:"8px",fontSize:11,fontWeight:600,color:"#6b7280",textAlign:"center"}}>{h}</th>)}</tr></thead>
+                          <tbody>{Object.entries(operariosMap).sort((a,b)=>b[1].litros-a[1].litros).map(([op,v],i)=>{
+                            const aOv=avg(v.overruns),aMF=avg(v.mermasFab),aMM=avg(v.mermasMant);
+                            const so2=semaforoOverrun(aOv),sm2=semaforoMerma(aMF,15),sm3=semaforoMerma(aMM,20);
+                            const lph=v.horas>0?(v.litros/v.horas).toFixed(1)+" L/h":"-";
+                            const kfph=v.horas>0&&v.kgFab>0?(v.kgFab/v.horas).toFixed(1)+" kg/h":"-";
+                            const td={padding:"8px",textAlign:"center",color:"#4b5563"};
+                            return <tr key={op} style={{background:i%2===0?"white":"#f9fafb"}}>
+                              <td style={{...td,fontWeight:600,color:"#111"}}>{op}</td>
+                              <td style={td}>{v.turnos}</td>
+                              <td style={td}>{v.horas>0?v.horas.toFixed(1)+" h":"-"}</td>
+                              <td style={{...td,fontWeight:600,color:"#166534"}}>{v.kgFab.toFixed(1)} kg</td>
+                              <td style={{...td,fontWeight:600,color:"#166534"}}>{kfph}</td>
+                              <td style={{...td,fontWeight:600,color:"#2563eb"}}>{v.litros.toFixed(1)} L</td>
+                              <td style={{...td,fontWeight:600,color:"#4338ca"}}>{lph}</td>
+                              <td style={td}><span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:99,background:so2.bg,color:so2.tc}}>{fmt(aOv)}%</span></td>
+                              <td style={td}><span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:99,background:sm2.bg,color:sm2.tc}}>{fmt(aMF)}%</span></td>
+                              <td style={td}><span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:99,background:sm3.bg,color:sm3.tc}}>{fmt(aMM)}%</span></td>
+                            </tr>;
+                          })}</tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                  {Object.keys(saboresMap).length>0&&(
+                    <div style={{background:"white",borderRadius:12,boxShadow:"0 1px 3px rgba(0,0,0,0.1)",padding:16}}>
+                      <h3 style={{fontWeight:700,fontSize:14,margin:"0 0 12px"}}>🍦 Overrun y merma por sabor</h3>
+                      <div style={{overflowX:"auto"}}>
+                        <table style={{width:"100%",fontSize:13,borderCollapse:"collapse"}}>
+                          <thead style={{background:"#f9fafb",borderBottom:"1px solid #e5e7eb"}}><tr>{["Sabor","Kg Fab. total","Litros total","Overrun prom.","Merma Fab prom."].map(h=><th key={h} style={{padding:"8px",fontSize:11,fontWeight:600,color:"#6b7280",textAlign:"center"}}>{h}</th>)}</tr></thead>
+                          <tbody>{Object.entries(saboresMap).sort((a,b)=>b[1].litros-a[1].litros).map(([sab,v],i)=>{
+                            const aOv=avg(v.overruns),aMF=avg(v.mermasFab);
+                            const so3=semaforoOverrun(aOv),sm4=semaforoMerma(aMF,15);
+                            const td={padding:"8px",textAlign:"center",color:"#4b5563"};
+                            return <tr key={sab} style={{background:i%2===0?"white":"#f9fafb"}}>
+                              <td style={{...td,fontWeight:600,color:"#111"}}>{sab}</td>
+                              <td style={td}>{v.kgFab.toFixed(1)} kg</td>
+                              <td style={{...td,fontWeight:600,color:"#2563eb"}}>{v.litros.toFixed(1)} L</td>
+                              <td style={td}><span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:99,background:so3.bg,color:so3.tc}}>{fmt(aOv)}%</span></td>
+                              <td style={td}><span style={{fontSize:11,fontWeight:600,padding:"2px 8px",borderRadius:99,background:sm4.bg,color:sm4.tc}}>{fmt(aMF)}%</span></td>
+                            </tr>;
+                          })}</tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* ── PARÁMETROS ── */}
+        {tab==="Parámetros"&&isAdmin&&(
+          <div style={{maxWidth:480}}>
+            <div style={{background:"white",borderRadius:12,boxShadow:"0 1px 3px rgba(0,0,0,0.1)",padding:16}}>
+              <h3 style={{fontWeight:700,color:"#111",margin:"0 0 4px"}}>Parámetros de producción</h3>
+              <p style={{fontSize:12,color:"#9ca3af",margin:"0 0 16px"}}>Rangos de overrun para el semáforo de calidad.</p>
+              <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                {[
+                  ["overrunMin","🔵 Overrun mínimo (%)","Por debajo = underrun."],
+                  ["overrunIdeal","🟢 Overrun ideal (%)","Valor objetivo."],
+                  ["overrunMax","🔴 Overrun máximo (%)","Por encima = alerta ⚠️."],
+                ].map(([field,label,hint])=>(
+                  <div key={field}>
+                    <div style={{display:"flex",alignItems:"center",gap:12}}>
+                      <label style={{fontSize:14,color:"#374151",width:260}}>{label}</label>
+                      <input type="number" min="0" step="1" value={params[field]??""} onChange={e=>updateParam(field,parseFloat(e.target.value)||0)} style={{border:"1px solid #e5e7eb",borderRadius:4,padding:"4px 8px",fontSize:14,width:80}}/>
+                    </div>
+                    <p style={{fontSize:11,color:"#9ca3af",margin:"2px 0 0"}}>{hint}</p>
+                  </div>
+                ))}
+              </div>
+              {(params.overrunMin>=params.overrunIdeal||params.overrunIdeal>=params.overrunMax)&&(
+                <div style={{marginTop:16,background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:8,padding:"8px 12px",fontSize:12,color:"#b91c1c",fontWeight:500}}>
+                  ⚠️ Debe cumplirse: Mínimo &lt; Ideal &lt; Máximo.
+                </div>
+              )}
+              {params.overrunMin<params.overrunIdeal&&params.overrunIdeal<params.overrunMax&&(
+                <div style={{marginTop:20,padding:"0 4px"}}>
+                  <div style={{position:"relative",height:12,borderRadius:99,background:"linear-gradient(to right,#93c5fd,#4ade80,#f87171)"}}>
+                    {[{v:params.overrunMin,color:"#1d4ed8"},{v:params.overrunIdeal,color:"#166534"},{v:params.overrunMax,color:"#b91c1c"}].map(({v,color})=>{
+                      const pct=((v-params.overrunMin)/(params.overrunMax-params.overrunMin))*100;
+                      return <div key={v} style={{position:"absolute",top:-20,left:`${pct}%`,transform:"translateX(-50%)",fontSize:11,fontWeight:700,color,whiteSpace:"nowrap"}}>{v}%</div>;
+                    })}
+                  </div>
+                </div>
+              )}
+              <div style={{marginTop:24,paddingTop:16,borderTop:"1px solid #e5e7eb"}}>
+                <p style={{fontSize:13,fontWeight:600,color:"#374151",margin:"0 0 4px"}}>Lista de sabores</p>
+                <p style={{fontSize:11,color:"#9ca3af",margin:"0 0 10px"}}>{params.sabores.length} sabores cargados</p>
+                <button onClick={async()=>{await saveParams({...params,sabores:DEFAULT_PARAMS.sabores});}} style={{background:"#facc15",color:"#111",fontWeight:600,padding:"8px 14px",borderRadius:8,border:"none",cursor:"pointer",fontSize:13}}>
+                  🔄 Actualizar lista de sabores
+                </button>
+                <p style={{fontSize:11,color:"#9ca3af",marginTop:6}}>Reemplaza la lista con los 35 sabores precargados.</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── USUARIOS ── */}
+        {tab==="Usuarios"&&isAdmin&&(
+          <div style={{maxWidth:640}}>
+            <div style={{background:"white",borderRadius:12,boxShadow:"0 1px 3px rgba(0,0,0,0.1)",padding:16,marginBottom:16}}>
+              <h3 style={{fontWeight:700,color:"#111",margin:"0 0 16px"}}>Crear usuario</h3>
+              <div style={{display:"flex",flexWrap:"wrap",gap:12,marginBottom:12}}>
+                <div style={{flex:1,minWidth:128}}>
+                  <label style={{fontSize:11,color:"#6b7280",display:"block",marginBottom:4}}>Nombre</label>
+                  <input value={newName} onChange={e=>setNewName(e.target.value)} style={ic} placeholder="Nombre completo"/>
+                </div>
+                <div>
+                  <label style={{fontSize:11,color:"#6b7280",display:"block",marginBottom:4}}>Rol</label>
+                  <select value={newRole} onChange={e=>setNewRole(e.target.value)} style={{border:"1px solid #e5e7eb",borderRadius:4,padding:"4px 8px",fontSize:14}}>
+                    <option value="operario">Operario</option><option value="admin">Admin</option>
+                  </select>
+                </div>
+                {newRole==="operario"?(
+                  <div>
+                    <label style={{fontSize:11,color:"#6b7280",display:"block",marginBottom:4}}>PIN (4 dígitos)</label>
+                    <input value={newPin} onChange={e=>setNewPin(e.target.value.replace(/\D/g,"").slice(0,4))} style={{border:"1px solid #e5e7eb",borderRadius:4,padding:"4px 8px",fontSize:14,width:80}} placeholder="1234"/>
+                  </div>
+                ):(
+                  <div>
+                    <label style={{fontSize:11,color:"#6b7280",display:"block",marginBottom:4}}>Contraseña</label>
+                    <input type="password" value={newPass} onChange={e=>setNewPass(e.target.value)} style={{border:"1px solid #e5e7eb",borderRadius:4,padding:"4px 8px",fontSize:14,width:120}}/>
+                  </div>
+                )}
+              </div>
+              {userMsg&&<p style={{fontSize:13,marginBottom:8,color:userMsg.startsWith("✓")?"#16a34a":"#dc2626"}}>{userMsg}</p>}
+              <button onClick={addUser} style={{background:"#111",color:"white",fontWeight:600,padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:13}}>Crear</button>
+            </div>
+            <div style={{background:"white",borderRadius:12,boxShadow:"0 1px 3px rgba(0,0,0,0.1)",padding:16}}>
+              <h3 style={{fontWeight:700,color:"#111",margin:"0 0 12px"}}>Usuarios</h3>
+              <div style={{display:"flex",alignItems:"center",gap:8,padding:8,background:"#fefce8",borderRadius:8,fontSize:13,marginBottom:8}}>
+                <span style={{width:24,height:24,borderRadius:"50%",background:"#facc15",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700}}>A</span>
+                <span style={{fontWeight:500}}>admin</span>
+                <span style={{fontSize:11,color:"#9ca3af"}}>Principal</span>
+                <span style={{marginLeft:"auto",fontSize:11,color:"#16a34a",fontWeight:600}}>Activo</span>
+              </div>
+              {users.length===0&&<p style={{color:"#9ca3af",fontSize:13,textAlign:"center",padding:"16px 0"}}>No hay usuarios creados.</p>}
+              {users.map(u=>(
+                <div key={u.id} style={{display:"flex",alignItems:"center",gap:8,padding:8,borderRadius:8,fontSize:13,marginBottom:4,background:u.active?"#f9fafb":"#fef2f2",opacity:u.active?1:0.6}}>
+                  <span style={{width:24,height:24,borderRadius:"50%",background:u.role==="admin"?"#facc15":"#dbeafe",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:u.role==="admin"?"#111":"#1d4ed8"}}>{u.role==="admin"?"A":"O"}</span>
+                  <span style={{fontWeight:500}}>{u.name}</span>
+                  <span style={{fontSize:11,color:"#9ca3af"}}>{u.role==="operario"?`PIN: ${u.pin}`:`@${u.username}`}</span>
+                  <span style={{marginLeft:"auto",fontSize:11,fontWeight:600,color:u.active?"#16a34a":"#dc2626"}}>{u.active?"Activo":"Inactivo"}</span>
+                  <button onClick={()=>toggleUser(u.id)} style={{fontSize:11,color:"#6b7280",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>{u.active?"Deshabilitar":"Habilitar"}</button>
+                  <button onClick={()=>deleteUser(u.id)} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"#d1d5db"}}>×</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App/>);
+</script>
+</body>
+</html>
