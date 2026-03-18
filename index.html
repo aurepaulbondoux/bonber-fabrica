@@ -20,6 +20,7 @@
   };
   const app = initializeApp(firebaseConfig);
   const db  = getFirestore(app);
+
   window.fbGet = async (key) => {
     try { const snap = await getDoc(doc(db,"bonber",key)); return snap.exists()?snap.data().value:null; } catch { return null; }
   };
@@ -32,6 +33,7 @@
   window.fbList = async (prefix) => {
     try { const snap = await getDocs(collection(db,"bonber")); return snap.docs.map(d=>d.id).filter(id=>id.startsWith(prefix)); } catch { return []; }
   };
+  window.fbInvalidate = (key) => {};
   window.firebaseReady = true;
   window.dispatchEvent(new Event("firebaseReady"));
 </script>
@@ -70,7 +72,7 @@ async function slist(prefix) {
 }
 
 // ── CONSTANTES ──
-const ADMIN = { id:"admin", username:"admin", password:"bonber2024", role:"admin", name:"Admin" };
+const ADMIN = { id:"admin", username:"admin", password:"bonber2026", role:"admin", name:"Admin" };
 const DEFAULT_PARAMS = {
   overrunMin:20, overrunIdeal:25, overrunMax:30,
   sabores:[
@@ -113,32 +115,54 @@ function fichasTieneDatos(f) {
   return (f.rows||[]).some(r=>r.sabor||r.kgFab||r.kgMant||r.balde3||r.balde5);
 }
 
-// ── CALCULAR PENDIENTES (función global, fuera del componente) ──
+// ── CALCULAR PENDIENTES — OPTIMIZADO CON Promise.all ──
 async function calcularPendientes(fechaActual, turnoIdxActual) {
-  const acum = {};
+  // 1. Generar lista de días a revisar
   const fechas = [];
   for(let i=30; i>=0; i--) {
     const d = new Date(fechaActual);
     d.setDate(d.getDate()-i);
     fechas.push(d.toISOString().split("T")[0]);
   }
+
+  // 2. Para cada día, leer todos los turnos posibles en paralelo
+  // Primero hacemos una lectura paralela de todos los turnos posibles (asumimos máx 10 por día)
+  const MAX_TURNOS = 10;
+  const allKeys = [];
   for(const dia of fechas) {
-    let idx=0;
-    while(true) {
-      if(dia===fechaActual && idx>=turnoIdxActual) break;
-      const key=`bonber:ficha:${dia}:${idx}`;
-      const f=await sget(key);
-      if(!f) break;
-      if(!f.eliminado) {
-        for(const r of (f.rows||[])) {
-          if(!r.sabor) continue;
-          if(!acum[r.sabor]) acum[r.sabor]=0;
-          acum[r.sabor] += (parseFloat(r.kgFab)||0) - (parseFloat(r.kgMant)||0);
-        }
-      }
-      idx++;
+    for(let idx=0; idx<MAX_TURNOS; idx++) {
+      if(dia === fechaActual && idx >= turnoIdxActual) break;
+      allKeys.push({ key:`bonber:ficha:${dia}:${idx}`, dia, idx });
     }
   }
+
+  // 3. Leer todas las claves en paralelo
+  const results = await Promise.all(allKeys.map(async ({key, dia, idx}) => {
+    const f = await sget(key);
+    return { f, dia, idx };
+  }));
+
+  // 4. Agrupar por día y cortar en el primer null de cada día (fin de turnos)
+  const acum = {};
+  const fichasPorDia = {};
+  for(const {f, dia, idx} of results) {
+    if(!fichasPorDia[dia]) fichasPorDia[dia] = [];
+    fichasPorDia[dia].push({ f, idx });
+  }
+
+  for(const dia of fechas) {
+    const turnos = (fichasPorDia[dia] || []).sort((a,b)=>a.idx-b.idx);
+    for(const {f, idx} of turnos) {
+      if(!f) break; // fin de turnos para este día
+      if(f.eliminado) continue;
+      for(const r of (f.rows||[])) {
+        if(!r.sabor) continue;
+        if(!acum[r.sabor]) acum[r.sabor]=0;
+        acum[r.sabor] += (parseFloat(r.kgFab)||0) - (parseFloat(r.kgMant)||0);
+      }
+    }
+  }
+
   return Object.entries(acum)
     .filter(([,v])=>v>0.01)
     .map(([sabor,kg])=>mkRow({sabor, kgMant:kg.toFixed(2), pendiente:true}));
@@ -429,12 +453,14 @@ function App() {
   const rows=fichaHoy.rows||[];
   const locked=!fichaHoy.horaInicio&&!fichaHoy.cerrado;
 
-  // Firebase ready
+  // Firebase ready — con timeout de seguridad
   useEffect(()=>{
     if(window.firebaseReady){setFbReady(true);return;}
     const h=()=>setFbReady(true);
     window.addEventListener("firebaseReady",h);
-    return ()=>window.removeEventListener("firebaseReady",h);
+    // Si en 8 segundos no arrancó, forzar igual
+    const t=setTimeout(()=>setFbReady(true),8000);
+    return ()=>{window.removeEventListener("firebaseReady",h);clearTimeout(t);};
   },[]);
 
   // Init app
@@ -447,45 +473,53 @@ function App() {
     })();
   },[fbReady]);
 
-  // Cargar turno activo al cambiar fecha o usuario
+  // Cargar turno activo al cambiar fecha o usuario — OPTIMIZADO
   useEffect(()=>{
     if(!user) return;
     setFichas({});setTurnoIdx(0);setConfirmCierre(false);setErroresCierre([]);
     (async()=>{
-      let idx=0;
-      while(true){
-        const key=`bonber:ficha:${fecha}:${idx}`;
-        const f=await sget(key);
-        if(!f){
-          // Turno nuevo: calcular pendientes e inyectar
-          const pendientes=await calcularPendientes(fecha,idx);
-          const ficha=mkFicha();
-          if(pendientes.length>0){
-            ficha.rows=[...pendientes, mkRow()];
-          }
-          setFichas(prev=>({...prev,[key]:ficha}));
-          setTurnoIdx(idx);
-          break;
-        }
-        if(!f.eliminado){
-          setFichas(prev=>({...prev,[key]:f}));
-          if(!f.cerrado){setTurnoIdx(idx);break;}
-        }
-        idx++;
+      // Leer todos los turnos del día en paralelo (máx 10)
+      const MAX_TURNOS = 10;
+      const keys = Array.from({length:MAX_TURNOS},(_,i)=>`bonber:ficha:${fecha}:${i}`);
+      const resultados = await Promise.all(keys.map(k=>sget(k)));
+
+      // Encontrar el turno activo (primer no-cerrado o el nuevo)
+      let turnoActivo = 0;
+      const fichasNuevas = {};
+      for(let i=0; i<resultados.length; i++){
+        const f = resultados[i];
+        if(!f) { turnoActivo = i; break; }
+        if(!f.eliminado) fichasNuevas[keys[i]] = f;
+        if(!f.cerrado && !f.eliminado) { turnoActivo = i; break; }
+        turnoActivo = i + 1;
       }
+
+      // Si es turno nuevo, calcular pendientes
+      const keyActivo = `bonber:ficha:${fecha}:${turnoActivo}`;
+      if(!fichasNuevas[keyActivo]) {
+        const pendientes = await calcularPendientes(fecha, turnoActivo);
+        const ficha = mkFicha();
+        if(pendientes.length > 0) ficha.rows = [...pendientes, mkRow()];
+        fichasNuevas[keyActivo] = ficha;
+      }
+
+      setFichas(fichasNuevas);
+      setTurnoIdx(turnoActivo);
     })();
   },[fecha,user]);
 
-  // Cargar reportes
+  // Cargar reportes — OPTIMIZADO con Promise.all
   const cargarReportFichas = useCallback(async()=>{
     setReportFichas([]);setReportLoading(true);
-    const result=[];let idx=0;
-    while(true){
-      const key=`bonber:ficha:${reportFecha}:${idx}`;
-      const f=await sget(key);
+    const MAX_TURNOS = 10;
+    const keys = Array.from({length:MAX_TURNOS},(_,i)=>({
+      key:`bonber:ficha:${reportFecha}:${i}`, idx:i
+    }));
+    const resultados = await Promise.all(keys.map(({key})=>sget(key).then(f=>({key,f}))));
+    const result = [];
+    for(const {key,f} of resultados){
       if(!f) break;
-      if(!f.eliminado&&fichasTieneDatos(f)) result.push({...f,_idx:idx,_key:key});
-      idx++;
+      if(!f.eliminado && fichasTieneDatos(f)) result.push({...f, _key:key, _idx:result.length});
     }
     setReportFichas(result);setReportLoading(false);
   },[reportFecha]);
@@ -504,11 +538,11 @@ function App() {
     })();
   },[isAdmin,tab]);
 
-  // Persistencia
+  // Persistencia — invalida caché al guardar
   async function persistFicha(f){
     setFichas(prev=>({...prev,[fichaKey]:f}));
     setSaving(true);clearTimeout(savingTimer.current);
-    await sset(fichaKey,f);
+    await sset(fichaKey,f); // fbSet ya actualiza el caché
     savingTimer.current=setTimeout(()=>setSaving(false),800);
   }
   function updateRow(id,field,val){persistFicha({...fichaHoy,rows:rows.map(r=>r.id===id?{...r,[field]:val}:r)});}
@@ -569,6 +603,7 @@ function App() {
   async function eliminarTurno(key){
     const f=await sget(key);
     if(f) await sset(key,{...f,eliminado:true});
+    window.fbInvalidate(key); // limpiar caché para forzar re-lectura
     setConfirmDeleteTurno(null);setConfirmDeleteStep(0);
     await cargarReportFichas();
   }
@@ -599,27 +634,47 @@ function App() {
   async function toggleUser(id){const u=users.map(x=>x.id===id?{...x,active:!x.active}:x);setUsers(u);await sset("bonber:users",u);}
   async function deleteUser(id){const u=users.filter(x=>x.id!==id);setUsers(u);await sset("bonber:users",u);}
 
-  // Análisis
+  // Análisis — OPTIMIZADO con Promise.all
   async function correrAnalisis(){
     setAnalisisLoading(true);setAnalisisRan(true);
     const desde=new Date(analisisDesde),hasta=new Date(analisisHasta);
     const dias=[];
     for(let d=new Date(desde);d<=hasta;d.setDate(d.getDate()+1)) dias.push(d.toISOString().split("T")[0]);
+
+    const MAX_TURNOS = 10;
+
+    // Generar todas las claves necesarias
+    const todasLasClaves = dias.flatMap(dia=>
+      Array.from({length:MAX_TURNOS},(_,i)=>({key:`bonber:ficha:${dia}:${i}`,dia,idx:i}))
+    );
+
+    // Leer TODO en paralelo de una vez
+    const todosLosResultados = await Promise.all(
+      todasLasClaves.map(({key,dia,idx})=>sget(key).then(f=>({f,dia,idx})))
+    );
+
+    // Agrupar por día
+    const porDia = {};
+    for(const {f,dia,idx} of todosLosResultados){
+      if(!porDia[dia]) porDia[dia]=[];
+      porDia[dia].push({f,idx});
+    }
+
     const resultado=[];
     for(const dia of dias){
-      let idx=0,turnos=[];
-      while(true){const key=`bonber:ficha:${dia}:${idx}`;const f=await sget(key);if(!f)break;if(!f.eliminado)turnos.push(f);idx++;}
-      if(!turnos.length){resultado.push({fecha:dia,litros:0,kgFab:0,kgMant:0,overruns:[],mermasFab:[],mermasMant:[],operarios:{},saboresData:[],horasTrabajadas:0});continue;}
-      let litros=0,kgFab=0,kgMant=0,overruns=[],mermasFab=[],mermasMant=[],operarios={},saboresData=[],horasTrabajadas=0;
-      for(const t of turnos){
-        const hI=parseHora(t.horaInicio),hF=parseHora(t.horaFin);
+      const turnosDia=(porDia[dia]||[]).sort((a,b)=>a.idx-b.idx);
+      let litros=0,kgFab=0,kgMant=0,overruns=[],mermasFab=[],mermasMant=[],operarios={},saboresData=[],horasTrabajadas=0,cantTurnos=0;
+      for(const {f} of turnosDia){
+        if(!f) break; // fin de turnos para este día
+        if(f.eliminado) continue;
+        cantTurnos++;
+        const hI=parseHora(f.horaInicio),hF=parseHora(f.horaFin);
         const dur=(hI!=null&&hF!=null&&hF>hI)?hF-hI:0;horasTrabajadas+=dur;
-        const op=t.operario||"Sin asignar";
+        const op=f.operario||"Sin asignar";
         if(!operarios[op]) operarios[op]={kgFab:0,kgMant:0,litros:0,overruns:[],mermasFab:[],mermasMant:[],turnos:0,horas:0};
         operarios[op].turnos++;operarios[op].horas+=dur;
-        for(const r of (t.rows||[])){
+        for(const r of (f.rows||[])){
           if(!r.sabor&&!r.kgFab&&!r.kgMant) continue;
-          // Filas pendientes no suman kgFab (ya se contó en el turno original)
           const kF=r.pendiente?0:(parseFloat(r.kgFab)||0);
           const kM=parseFloat(r.kgMant)||0;
           const c=calcRow(r);const lS=c.litrosStock;
@@ -631,7 +686,7 @@ function App() {
           if(r.sabor) saboresData.push({sabor:r.sabor,overrun:c.overrun!=="-"?parseFloat(c.overrun):null,mermaFab:c.mermaFabPct!=="-"?parseFloat(c.mermaFabPct):null,litros:lS,kgFab:kF});
         }
       }
-      resultado.push({fecha:dia,litros,kgFab,kgMant,overruns,mermasFab,mermasMant,operarios,saboresData,turnos:turnos.length,horasTrabajadas});
+      resultado.push({fecha:dia,litros,kgFab,kgMant,overruns,mermasFab,mermasMant,operarios,saboresData,turnos:cantTurnos,horasTrabajadas});
     }
     setAnalisisDatos(resultado);setAnalisisLoading(false);
   }
@@ -649,6 +704,7 @@ function App() {
     <div style={{minHeight:"100vh",background:"#111827",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12}}>
       <span style={{fontWeight:900,fontSize:30,color:"#facc15"}}>BonBër</span>
       <p style={{color:"#9ca3af",fontSize:14}}>Conectando...</p>
+      <p style={{color:"#6b7280",fontSize:11}}>Si tarda mucho, verificá tu conexión a internet.</p>
     </div>
   );
   if(!user) return <Login users={users} onLogin={u=>{setUser(u);setTab("Producción");}}/>;
