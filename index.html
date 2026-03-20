@@ -534,7 +534,14 @@ function App() {
     (async()=>{
       const keys=await slist("bonber:ficha:");
       const fechas=[...new Set(keys.map(k=>k.replace("bonber:ficha:","").split(":")[0]))].filter(Boolean).sort().reverse();
-      setFichaKeys(fechas);
+      // Filtrar fechas que solo tienen turnos eliminados o sin datos
+      const fichasPorFecha = await Promise.all(fechas.map(async fecha=>{
+        const keysDelDia=keys.filter(k=>k.startsWith(`bonber:ficha:${fecha}:`));
+        const fichas=await Promise.all(keysDelDia.map(k=>sget(k)));
+        const tieneValidos=fichas.some(f=>f&&!f.eliminado&&fichasTieneDatos(f));
+        return tieneValidos?fecha:null;
+      }));
+      setFichaKeys(fichasPorFecha.filter(Boolean));
     })();
   },[isAdmin,tab]);
 
