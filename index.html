@@ -1329,10 +1329,10 @@ function App() {
 
             <div style={{background:"white",borderRadius:12,boxShadow:"0 1px 3px rgba(0,0,0,0.1)",padding:16,marginTop:16,border:"1px solid #fecaca"}}>
               <h3 style={{fontWeight:700,color:"#b91c1c",margin:"0 0 4px"}}>⚠️ Zona de mantenimiento</h3>
-              <p style={{fontSize:12,color:"#6b7280",margin:"0 0 12px"}}>Borra todas las fichas de producción cargadas (pruebas incluidas). No afecta usuarios ni parámetros. Esta acción no se puede deshacer.</p>
+              <p style={{fontSize:12,color:"#6b7280",margin:"0 0 12px"}}>Oculta todas las fichas de producción cargadas hasta ahora (pruebas incluidas) de Reportes y Análisis. No afecta usuarios ni parámetros.</p>
               {wipeMsg&&<p style={{fontSize:13,marginBottom:8,color:wipeMsg.startsWith("✓")?"#16a34a":"#dc2626",fontWeight:600}}>{wipeMsg}</p>}
               {wipeStep===0&&(
-                <button onClick={()=>setWipeStep(1)} style={{background:"none",border:"1px solid #fca5a5",color:"#dc2626",fontWeight:600,padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:13}}>🗑️ Borrar todos los datos de producción</button>
+                <button onClick={()=>setWipeStep(1)} style={{background:"none",border:"1px solid #fca5a5",color:"#dc2626",fontWeight:600,padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:13}}>🗑️ Ocultar todos los datos de producción</button>
               )}
               {wipeStep===1&&(
                 <div style={{display:"flex",alignItems:"center",gap:8,background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:8,padding:"8px 12px",flexWrap:"wrap"}}>
@@ -1358,7 +1358,27 @@ function App() {
 }
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
-root.render(<App/>);
+
+class ErrorBoundary extends React.Component {
+  constructor(props){ super(props); this.state = { hasError:false, error:null }; }
+  static getDerivedStateFromError(error){ return { hasError:true, error }; }
+  componentDidCatch(error, info){ console.error("BonBër crash:", error, info); }
+  render(){
+    if(this.state.hasError){
+      return (
+        <div style={{minHeight:"100vh",background:"#111827",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14,padding:24,textAlign:"center"}}>
+          <span style={{fontWeight:900,fontSize:28,color:"#facc15"}}>BonBër</span>
+          <p style={{color:"#f87171",fontSize:15,fontWeight:700,margin:0}}>⚠️ Ocurrió un error inesperado</p>
+          <p style={{color:"#9ca3af",fontSize:12,maxWidth:420,margin:0}}>{String((this.state.error&&this.state.error.message)||this.state.error||"Error desconocido")}</p>
+          <button onClick={()=>window.location.reload()} style={{background:"#facc15",color:"#111",fontWeight:700,padding:"10px 20px",borderRadius:8,border:"none",cursor:"pointer",fontSize:14}}>🔄 Recargar la app</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+root.render(<ErrorBoundary><App/></ErrorBoundary>);
 </script>
 </body>
 </html>
