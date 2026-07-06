@@ -33,7 +33,6 @@
   window.fbList = async (prefix) => {
     try { const snap = await getDocs(collection(db,"bonber")); return snap.docs.map(d=>d.id).filter(id=>id.startsWith(prefix)); } catch { return []; }
   };
-  window.fbInvalidate = (key) => {};
   window.firebaseReady = true;
   window.dispatchEvent(new Event("firebaseReady"));
 </script>
@@ -69,6 +68,9 @@ async function sset(key, val) {
 }
 async function slist(prefix) {
   try { return await window.fbList(prefix); } catch { return []; }
+}
+async function sdelete(key) {
+  try { await window.fbDelete(key); } catch(e) { console.error(e); }
 }
 
 // ── CONSTANTES ──
@@ -1323,6 +1325,29 @@ function App() {
                   <button onClick={()=>deleteUser(u.id)} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"#d1d5db"}}>×</button>
                 </div>
               ))}
+            </div>
+
+            <div style={{background:"white",borderRadius:12,boxShadow:"0 1px 3px rgba(0,0,0,0.1)",padding:16,marginTop:16,border:"1px solid #fecaca"}}>
+              <h3 style={{fontWeight:700,color:"#b91c1c",margin:"0 0 4px"}}>⚠️ Zona de mantenimiento</h3>
+              <p style={{fontSize:12,color:"#6b7280",margin:"0 0 12px"}}>Borra todas las fichas de producción cargadas (pruebas incluidas). No afecta usuarios ni parámetros. Esta acción no se puede deshacer.</p>
+              {wipeMsg&&<p style={{fontSize:13,marginBottom:8,color:wipeMsg.startsWith("✓")?"#16a34a":"#dc2626",fontWeight:600}}>{wipeMsg}</p>}
+              {wipeStep===0&&(
+                <button onClick={()=>setWipeStep(1)} style={{background:"none",border:"1px solid #fca5a5",color:"#dc2626",fontWeight:600,padding:"8px 14px",borderRadius:8,cursor:"pointer",fontSize:13}}>🗑️ Borrar todos los datos de producción</button>
+              )}
+              {wipeStep===1&&(
+                <div style={{display:"flex",alignItems:"center",gap:8,background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:8,padding:"8px 12px",flexWrap:"wrap"}}>
+                  <span style={{fontSize:13,color:"#b91c1c",fontWeight:500}}>¿Seguro? Se borrarán todas las fichas de todos los días.</span>
+                  <button onClick={()=>setWipeStep(2)} style={{background:"#ef4444",color:"white",fontWeight:600,padding:"4px 12px",borderRadius:6,border:"none",cursor:"pointer",fontSize:13}}>Sí, continuar</button>
+                  <button onClick={()=>setWipeStep(0)} style={{background:"#e5e7eb",color:"#374151",fontWeight:600,padding:"4px 12px",borderRadius:6,border:"none",cursor:"pointer",fontSize:13}}>Cancelar</button>
+                </div>
+              )}
+              {wipeStep===2&&(
+                <div style={{display:"flex",alignItems:"center",gap:8,background:"#fef2f2",border:"2px solid #ef4444",borderRadius:8,padding:"8px 12px",flexWrap:"wrap"}}>
+                  <span style={{fontSize:12,color:"#b91c1c",fontWeight:700}}>⚠️ Última confirmación — no se puede deshacer</span>
+                  <button onClick={borrarTodosLosDatosProduccion} disabled={wiping} style={{background:"#b91c1c",color:"white",fontWeight:700,padding:"4px 12px",borderRadius:6,border:"none",cursor:"pointer",fontSize:13,opacity:wiping?0.6:1}}>{wiping?"Borrando...":"Confirmar borrado"}</button>
+                  <button onClick={()=>setWipeStep(0)} disabled={wiping} style={{background:"#e5e7eb",color:"#374151",fontWeight:600,padding:"4px 12px",borderRadius:6,border:"none",cursor:"pointer",fontSize:13}}>Cancelar</button>
+                </div>
+              )}
             </div>
           </div>
         )}
