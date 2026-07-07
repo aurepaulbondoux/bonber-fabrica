@@ -20,7 +20,6 @@
   };
   const app = initializeApp(firebaseConfig);
   const db  = getFirestore(app);
-
   window.fbGet = async (key) => {
     try { const snap = await getDoc(doc(db,"bonber",key)); return snap.exists()?snap.data().value:null; } catch { return null; }
   };
@@ -69,9 +68,6 @@ async function sset(key, val) {
 async function slist(prefix) {
   try { return await window.fbList(prefix); } catch { return []; }
 }
-async function sdelete(key) {
-  try { await window.fbDelete(key); } catch(e) { console.error(e); }
-}
 
 // ── CONSTANTES ──
 const ADMIN = { id:"admin", username:"admin", password:"bonber2026", role:"admin", name:"Admin" };
@@ -117,19 +113,16 @@ function fichasTieneDatos(f) {
   return (f.rows||[]).some(r=>r.sabor||r.kgFab||r.kgMant||r.balde3||r.balde5);
 }
 
-// ── CALCULAR PENDIENTES — OPTIMIZADO CON Promise.all ──
+const MAX_TURNOS = 12;
+
+// ── CALCULAR PENDIENTES — paralelizado ──
 async function calcularPendientes(fechaActual, turnoIdxActual) {
-  // 1. Generar lista de días a revisar
   const fechas = [];
   for(let i=30; i>=0; i--) {
     const d = new Date(fechaActual);
     d.setDate(d.getDate()-i);
     fechas.push(d.toISOString().split("T")[0]);
   }
-
-  // 2. Para cada día, leer todos los turnos posibles en paralelo
-  // Primero hacemos una lectura paralela de todos los turnos posibles (asumimos máx 10 por día)
-  const MAX_TURNOS = 10;
   const allKeys = [];
   for(const dia of fechas) {
     for(let idx=0; idx<MAX_TURNOS; idx++) {
@@ -137,25 +130,20 @@ async function calcularPendientes(fechaActual, turnoIdxActual) {
       allKeys.push({ key:`bonber:ficha:${dia}:${idx}`, dia, idx });
     }
   }
-
-  // 3. Leer todas las claves en paralelo
   const results = await Promise.all(allKeys.map(async ({key, dia, idx}) => {
     const f = await sget(key);
     return { f, dia, idx };
   }));
-
-  // 4. Agrupar por día y cortar en el primer null de cada día (fin de turnos)
   const acum = {};
   const fichasPorDia = {};
   for(const {f, dia, idx} of results) {
     if(!fichasPorDia[dia]) fichasPorDia[dia] = [];
     fichasPorDia[dia].push({ f, idx });
   }
-
   for(const dia of fechas) {
     const turnos = (fichasPorDia[dia] || []).sort((a,b)=>a.idx-b.idx);
     for(const {f, idx} of turnos) {
-      if(!f) break; // fin de turnos para este día
+      if(!f) break;
       if(f.eliminado) continue;
       for(const r of (f.rows||[])) {
         if(!r.sabor) continue;
@@ -164,7 +152,6 @@ async function calcularPendientes(fechaActual, turnoIdxActual) {
       }
     }
   }
-
   return Object.entries(acum)
     .filter(([,v])=>v>0.01)
     .map(([sabor,kg])=>mkRow({sabor, kgMant:kg.toFixed(2), pendiente:true}));
@@ -446,6 +433,9 @@ function App() {
   const [newPass,setNewPass]=useState("");
   const [userMsg,setUserMsg]=useState("");
   const [saving,setSaving]=useState(false);
+  const [wipeStep,setWipeStep]=useState(0);
+  const [wiping,setWiping]=useState(false);
+  const [wipeMsg,setWipeMsg]=useState("");
   const savingTimer=useRef(null);
 
   const isAdmin=user?.role==="admin";
@@ -460,7 +450,6 @@ function App() {
     if(window.firebaseReady){setFbReady(true);return;}
     const h=()=>setFbReady(true);
     window.addEventListener("firebaseReady",h);
-    // Si en 8 segundos no arrancó, forzar igual
     const t=setTimeout(()=>setFbReady(true),8000);
     return ()=>{window.removeEventListener("firebaseReady",h);clearTimeout(t);};
   },[]);
@@ -475,17 +464,14 @@ function App() {
     })();
   },[fbReady]);
 
-  // Cargar turno activo al cambiar fecha o usuario — OPTIMIZADO
+  // Cargar turno activo al cambiar fecha o usuario — paralelizado
   useEffect(()=>{
     if(!user) return;
     setFichas({});setTurnoIdx(0);setConfirmCierre(false);setErroresCierre([]);
     (async()=>{
-      // Leer todos los turnos del día en paralelo (máx 10)
-      const MAX_TURNOS = 10;
       const keys = Array.from({length:MAX_TURNOS},(_,i)=>`bonber:ficha:${fecha}:${i}`);
       const resultados = await Promise.all(keys.map(k=>sget(k)));
 
-      // Encontrar el turno activo (primer no-cerrado o el nuevo)
       let turnoActivo = 0;
       const fichasNuevas = {};
       for(let i=0; i<resultados.length; i++){
@@ -496,7 +482,6 @@ function App() {
         turnoActivo = i + 1;
       }
 
-      // Si es turno nuevo, calcular pendientes
       const keyActivo = `bonber:ficha:${fecha}:${turnoActivo}`;
       if(!fichasNuevas[keyActivo]) {
         const pendientes = await calcularPendientes(fecha, turnoActivo);
@@ -510,14 +495,11 @@ function App() {
     })();
   },[fecha,user]);
 
-  // Cargar reportes — OPTIMIZADO con Promise.all
+  // Cargar reportes — paralelizado
   const cargarReportFichas = useCallback(async()=>{
     setReportFichas([]);setReportLoading(true);
-    const MAX_TURNOS = 10;
-    const keys = Array.from({length:MAX_TURNOS},(_,i)=>({
-      key:`bonber:ficha:${reportFecha}:${i}`, idx:i
-    }));
-    const resultados = await Promise.all(keys.map(({key})=>sget(key).then(f=>({key,f}))));
+    const keys = Array.from({length:MAX_TURNOS},(_,i)=>`bonber:ficha:${reportFecha}:${i}`);
+    const resultados = await Promise.all(keys.map(key=>sget(key).then(f=>({key,f}))));
     const result = [];
     for(const {key,f} of resultados){
       if(!f) break;
@@ -536,7 +518,6 @@ function App() {
     (async()=>{
       const keys=await slist("bonber:ficha:");
       const fechas=[...new Set(keys.map(k=>k.replace("bonber:ficha:","").split(":")[0]))].filter(Boolean).sort().reverse();
-      // Filtrar fechas que solo tienen turnos eliminados o sin datos
       const fichasPorFecha = await Promise.all(fechas.map(async fecha=>{
         const keysDelDia=keys.filter(k=>k.startsWith(`bonber:ficha:${fecha}:`));
         const fichas=await Promise.all(keysDelDia.map(k=>sget(k)));
@@ -547,11 +528,11 @@ function App() {
     })();
   },[isAdmin,tab]);
 
-  // Persistencia — invalida caché al guardar
+  // Persistencia
   async function persistFicha(f){
     setFichas(prev=>({...prev,[fichaKey]:f}));
     setSaving(true);clearTimeout(savingTimer.current);
-    await sset(fichaKey,f); // fbSet ya actualiza el caché
+    await sset(fichaKey,f);
     savingTimer.current=setTimeout(()=>setSaving(false),800);
   }
   function updateRow(id,field,val){persistFicha({...fichaHoy,rows:rows.map(r=>r.id===id?{...r,[field]:val}:r)});}
@@ -612,9 +593,28 @@ function App() {
   async function eliminarTurno(key){
     const f=await sget(key);
     if(f) await sset(key,{...f,eliminado:true});
-    window.fbInvalidate(key); // limpiar caché para forzar re-lectura
     setConfirmDeleteTurno(null);setConfirmDeleteStep(0);
     await cargarReportFichas();
+  }
+
+  // Borrado masivo de datos de producción (solo fichas — nunca usuarios ni parámetros)
+  // Usa el mismo mecanismo (marcar eliminado:true) que el borrado individual, ya probado y confiable.
+  async function borrarTodosLosDatosProduccion(){
+    setWiping(true);
+    try{
+      const keys=await slist("bonber:ficha:");
+      await Promise.all(keys.map(async key=>{
+        const f=await sget(key);
+        if(f && !f.eliminado) await sset(key,{...f,eliminado:true});
+      }));
+      setFichas({});setReportFichas([]);setFichaKeys([]);setAnalisisDatos([]);setAnalisisRan(false);
+      setWipeMsg(`✓ Se ocultaron ${keys.length} registros de producción.`);
+    }catch(e){
+      console.error(e);
+      setWipeMsg("✗ Ocurrió un error. Revisá la consola (F12) e intentá de nuevo.");
+    }
+    setWiping(false);setWipeStep(0);
+    setTimeout(()=>setWipeMsg(""),5000);
   }
 
   // Totales producción
@@ -643,38 +643,30 @@ function App() {
   async function toggleUser(id){const u=users.map(x=>x.id===id?{...x,active:!x.active}:x);setUsers(u);await sset("bonber:users",u);}
   async function deleteUser(id){const u=users.filter(x=>x.id!==id);setUsers(u);await sset("bonber:users",u);}
 
-  // Análisis — OPTIMIZADO con Promise.all
+  // Análisis — paralelizado
   async function correrAnalisis(){
     setAnalisisLoading(true);setAnalisisRan(true);
     const desde=new Date(analisisDesde),hasta=new Date(analisisHasta);
     const dias=[];
     for(let d=new Date(desde);d<=hasta;d.setDate(d.getDate()+1)) dias.push(d.toISOString().split("T")[0]);
 
-    const MAX_TURNOS = 10;
-
-    // Generar todas las claves necesarias
     const todasLasClaves = dias.flatMap(dia=>
       Array.from({length:MAX_TURNOS},(_,i)=>({key:`bonber:ficha:${dia}:${i}`,dia,idx:i}))
     );
-
-    // Leer TODO en paralelo de una vez
     const todosLosResultados = await Promise.all(
       todasLasClaves.map(({key,dia,idx})=>sget(key).then(f=>({f,dia,idx})))
     );
-
-    // Agrupar por día
     const porDia = {};
     for(const {f,dia,idx} of todosLosResultados){
       if(!porDia[dia]) porDia[dia]=[];
       porDia[dia].push({f,idx});
     }
-
     const resultado=[];
     for(const dia of dias){
       const turnosDia=(porDia[dia]||[]).sort((a,b)=>a.idx-b.idx);
       let litros=0,kgFab=0,kgMant=0,overruns=[],mermasFab=[],mermasMant=[],operarios={},saboresData=[],horasTrabajadas=0,cantTurnos=0;
       for(const {f} of turnosDia){
-        if(!f) break; // fin de turnos para este día
+        if(!f) break;
         if(f.eliminado) continue;
         cantTurnos++;
         const hI=parseHora(f.horaInicio),hF=parseHora(f.horaFin);
@@ -1336,15 +1328,15 @@ function App() {
               )}
               {wipeStep===1&&(
                 <div style={{display:"flex",alignItems:"center",gap:8,background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:8,padding:"8px 12px",flexWrap:"wrap"}}>
-                  <span style={{fontSize:13,color:"#b91c1c",fontWeight:500}}>¿Seguro? Se borrarán todas las fichas de todos los días.</span>
+                  <span style={{fontSize:13,color:"#b91c1c",fontWeight:500}}>¿Seguro? Se ocultarán todas las fichas de todos los días.</span>
                   <button onClick={()=>setWipeStep(2)} style={{background:"#ef4444",color:"white",fontWeight:600,padding:"4px 12px",borderRadius:6,border:"none",cursor:"pointer",fontSize:13}}>Sí, continuar</button>
                   <button onClick={()=>setWipeStep(0)} style={{background:"#e5e7eb",color:"#374151",fontWeight:600,padding:"4px 12px",borderRadius:6,border:"none",cursor:"pointer",fontSize:13}}>Cancelar</button>
                 </div>
               )}
               {wipeStep===2&&(
                 <div style={{display:"flex",alignItems:"center",gap:8,background:"#fef2f2",border:"2px solid #ef4444",borderRadius:8,padding:"8px 12px",flexWrap:"wrap"}}>
-                  <span style={{fontSize:12,color:"#b91c1c",fontWeight:700}}>⚠️ Última confirmación — no se puede deshacer</span>
-                  <button onClick={borrarTodosLosDatosProduccion} disabled={wiping} style={{background:"#b91c1c",color:"white",fontWeight:700,padding:"4px 12px",borderRadius:6,border:"none",cursor:"pointer",fontSize:13,opacity:wiping?0.6:1}}>{wiping?"Borrando...":"Confirmar borrado"}</button>
+                  <span style={{fontSize:12,color:"#b91c1c",fontWeight:700}}>⚠️ Última confirmación</span>
+                  <button onClick={borrarTodosLosDatosProduccion} disabled={wiping} style={{background:"#b91c1c",color:"white",fontWeight:700,padding:"4px 12px",borderRadius:6,border:"none",cursor:"pointer",fontSize:13,opacity:wiping?0.6:1}}>{wiping?"Procesando...":"Confirmar"}</button>
                   <button onClick={()=>setWipeStep(0)} disabled={wiping} style={{background:"#e5e7eb",color:"#374151",fontWeight:600,padding:"4px 12px",borderRadius:6,border:"none",cursor:"pointer",fontSize:13}}>Cancelar</button>
                 </div>
               )}
@@ -1356,8 +1348,6 @@ function App() {
     </div>
   );
 }
-
-const root = ReactDOM.createRoot(document.getElementById("root"));
 
 class ErrorBoundary extends React.Component {
   constructor(props){ super(props); this.state = { hasError:false, error:null }; }
@@ -1378,6 +1368,7 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(<ErrorBoundary><App/></ErrorBoundary>);
 </script>
 </body>
