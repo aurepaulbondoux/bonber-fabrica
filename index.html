@@ -9,7 +9,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getFirestore, doc, getDoc, setDoc, deleteDoc, collection, getDocs } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  import { getFirestore, doc, getDoc, setDoc, deleteDoc, collection, getDocs, query, where, documentId } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
   const firebaseConfig = {
     apiKey: "AIzaSyDUk_3MieAc1ewvGd7VDdQLkXYqSLTFgUE",
     authDomain: "bonber-produccion.firebaseapp.com",
@@ -31,6 +31,14 @@
   };
   window.fbList = async (prefix) => {
     try { const snap = await getDocs(collection(db,"bonber")); return snap.docs.map(d=>d.id).filter(id=>id.startsWith(prefix)); } catch { return []; }
+  };
+  // Lee en UNA sola consulta todos los documentos cuyo id esté en [from, to). Devuelve null si falla.
+  window.fbRange = async (from, to) => {
+    try {
+      const q = query(collection(db,"bonber"), where(documentId(),">=",from), where(documentId(),"<",to));
+      const snap = await getDocs(q);
+      return snap.docs.map(d=>({id:d.id,value:d.data().value}));
+    } catch(e) { console.error(e); return null; }
   };
   window.firebaseReady = true;
   window.dispatchEvent(new Event("firebaseReady"));
@@ -90,6 +98,12 @@ const DEFAULT_PARAMS = {
 };
 const mkRow = (extra={}) => ({ id:Math.random().toString(36).slice(2), sabor:"", kgFab:"", kgMant:"", balde3:"", balde5:"", obs:"", pendiente:false, ...extra });
 const mkFicha = () => ({ rows:[mkRow()], operario:"", mantecadoPor:"", horaInicio:"", horaFin:"", cerrado:false });
+// Ficha nueva con "Fabricado por" y "Mantecado por" precargados si ingresó un operario con PIN
+const mkFichaPara = (u) => {
+  const f = mkFicha();
+  if(u && u.role==="operario"){ f.operario = u.name||""; f.mantecadoPor = u.name||""; }
+  return f;
+};
 
 // ── HELPERS ──
 function parseHora(h) {
@@ -115,41 +129,39 @@ function fichasTieneDatos(f) {
 
 const MAX_TURNOS = 12;
 
-// ── CALCULAR PENDIENTES — paralelizado ──
+// ── LECTURA DE FICHAS PREVIAS (30 días) — una sola consulta por rango ──
+async function leerFichasPrevias(fechaActual) {
+  const iso = d => d.toISOString().split("T")[0];
+  const ini = new Date(fechaActual); ini.setDate(ini.getDate()-30);
+  const fin = new Date(fechaActual); fin.setDate(fin.getDate()+1);
+  const docs = await window.fbRange(`bonber:ficha:${iso(ini)}`, `bonber:ficha:${iso(fin)}`);
+  if(docs) {
+    return docs.map(({id,value})=>{
+      const [dia,idx] = id.replace("bonber:ficha:","").split(":");
+      let f=null; try { f=JSON.parse(value); } catch {}
+      return { f, dia, idx:parseInt(idx,10) };
+    });
+  }
+  // Respaldo: si la consulta por rango falla, lectura individual en paralelo
+  const keys=[];
+  for(let i=30;i>=0;i--){
+    const d=new Date(fechaActual); d.setDate(d.getDate()-i);
+    const dia=iso(d);
+    for(let idx=0; idx<MAX_TURNOS; idx++) keys.push({key:`bonber:ficha:${dia}:${idx}`,dia,idx});
+  }
+  return Promise.all(keys.map(async({key,dia,idx})=>({f:await sget(key),dia,idx})));
+}
+
+// ── CALCULAR PENDIENTES ──
 async function calcularPendientes(fechaActual, turnoIdxActual) {
-  const fechas = [];
-  for(let i=30; i>=0; i--) {
-    const d = new Date(fechaActual);
-    d.setDate(d.getDate()-i);
-    fechas.push(d.toISOString().split("T")[0]);
-  }
-  const allKeys = [];
-  for(const dia of fechas) {
-    for(let idx=0; idx<MAX_TURNOS; idx++) {
-      if(dia === fechaActual && idx >= turnoIdxActual) break;
-      allKeys.push({ key:`bonber:ficha:${dia}:${idx}`, dia, idx });
-    }
-  }
-  const results = await Promise.all(allKeys.map(async ({key, dia, idx}) => {
-    const f = await sget(key);
-    return { f, dia, idx };
-  }));
+  const fichas = await leerFichasPrevias(fechaActual);
   const acum = {};
-  const fichasPorDia = {};
-  for(const {f, dia, idx} of results) {
-    if(!fichasPorDia[dia]) fichasPorDia[dia] = [];
-    fichasPorDia[dia].push({ f, idx });
-  }
-  for(const dia of fechas) {
-    const turnos = (fichasPorDia[dia] || []).sort((a,b)=>a.idx-b.idx);
-    for(const {f, idx} of turnos) {
-      if(!f) break;
-      if(f.eliminado) continue;
-      for(const r of (f.rows||[])) {
-        if(!r.sabor) continue;
-        if(!acum[r.sabor]) acum[r.sabor]=0;
-        acum[r.sabor] += (parseFloat(r.kgFab)||0) - (parseFloat(r.kgMant)||0);
-      }
+  for(const {f,dia,idx} of fichas) {
+    if(!f || f.eliminado) continue;
+    if(dia===fechaActual && idx>=turnoIdxActual) continue;
+    for(const r of (f.rows||[])) {
+      if(!r.sabor) continue;
+      acum[r.sabor] = (acum[r.sabor]||0) + (parseFloat(r.kgFab)||0) - (parseFloat(r.kgMant)||0);
     }
   }
   return Object.entries(acum)
@@ -437,6 +449,7 @@ function App() {
   const [wiping,setWiping]=useState(false);
   const [wipeMsg,setWipeMsg]=useState("");
   const savingTimer=useRef(null);
+  const pendingSave=useRef(null);
 
   const isAdmin=user?.role==="admin";
   const TABS=isAdmin?["Producción","Reportes","Análisis","Parámetros","Usuarios"]:["Producción"];
@@ -445,6 +458,16 @@ function App() {
   const rows=fichaHoy.rows||[];
   const locked=!fichaHoy.horaInicio&&!fichaHoy.cerrado;
 
+  // Guardado con pausa: escribe en Firebase 0,6 s después del último cambio
+  async function flushSave(){
+    clearTimeout(savingTimer.current);
+    const p=pendingSave.current;
+    if(!p){ setSaving(false); return; }
+    pendingSave.current=null;
+    await sset(p.key,p.ficha);
+    if(!pendingSave.current) setSaving(false);
+  }
+
   // Firebase ready — con timeout de seguridad
   useEffect(()=>{
     if(window.firebaseReady){setFbReady(true);return;}
@@ -452,6 +475,17 @@ function App() {
     window.addEventListener("firebaseReady",h);
     const t=setTimeout(()=>setFbReady(true),8000);
     return ()=>{window.removeEventListener("firebaseReady",h);clearTimeout(t);};
+  },[]);
+
+  // Al cerrar o ocultar la pestaña, guardar lo que quede pendiente
+  useEffect(()=>{
+    const h=()=>{ if(pendingSave.current) flushSave(); };
+    window.addEventListener("beforeunload",h);
+    document.addEventListener("visibilitychange",h);
+    return ()=>{
+      window.removeEventListener("beforeunload",h);
+      document.removeEventListener("visibilitychange",h);
+    };
   },[]);
 
   // Init app
@@ -464,11 +498,12 @@ function App() {
     })();
   },[fbReady]);
 
-  // Cargar turno activo al cambiar fecha o usuario — paralelizado
+  // Cargar turno activo al cambiar fecha o usuario
   useEffect(()=>{
     if(!user) return;
     setFichas({});setTurnoIdx(0);setConfirmCierre(false);setErroresCierre([]);
     (async()=>{
+      await flushSave();
       const keys = Array.from({length:MAX_TURNOS},(_,i)=>`bonber:ficha:${fecha}:${i}`);
       const resultados = await Promise.all(keys.map(k=>sget(k)));
 
@@ -485,7 +520,7 @@ function App() {
       const keyActivo = `bonber:ficha:${fecha}:${turnoActivo}`;
       if(!fichasNuevas[keyActivo]) {
         const pendientes = await calcularPendientes(fecha, turnoActivo);
-        const ficha = mkFicha();
+        const ficha = mkFichaPara(user);
         if(pendientes.length > 0) ficha.rows = [...pendientes, mkRow()];
         fichasNuevas[keyActivo] = ficha;
       }
@@ -495,7 +530,7 @@ function App() {
     })();
   },[fecha,user]);
 
-  // Cargar reportes — paralelizado
+  // Cargar reportes
   const cargarReportFichas = useCallback(async()=>{
     setReportFichas([]);setReportLoading(true);
     const keys = Array.from({length:MAX_TURNOS},(_,i)=>`bonber:ficha:${reportFecha}:${i}`);
@@ -528,12 +563,13 @@ function App() {
     })();
   },[isAdmin,tab]);
 
-  // Persistencia
-  async function persistFicha(f){
+  // Persistencia (con pausa)
+  function persistFicha(f){
     setFichas(prev=>({...prev,[fichaKey]:f}));
-    setSaving(true);clearTimeout(savingTimer.current);
-    await sset(fichaKey,f);
-    savingTimer.current=setTimeout(()=>setSaving(false),800);
+    pendingSave.current={key:fichaKey,ficha:f};
+    setSaving(true);
+    clearTimeout(savingTimer.current);
+    savingTimer.current=setTimeout(flushSave,600);
   }
   function updateRow(id,field,val){persistFicha({...fichaHoy,rows:rows.map(r=>r.id===id?{...r,[field]:val}:r)});}
   function addRow(){persistFicha({...fichaHoy,rows:[...rows,mkRow()]});}
@@ -558,13 +594,21 @@ function App() {
     return errs;
   }
   function intentarCerrar(){const e=validarCierre();if(e.length>0){setErroresCierre(e);return;}setErroresCierre([]);setConfirmCierre(true);}
-  function cerrarTurno(){
+  async function cerrarTurno(){
+    // Cancelar cualquier guardado pendiente: la ficha cerrada ya incluye los últimos cambios
+    clearTimeout(savingTimer.current);pendingSave.current=null;setSaving(false);
+    setConfirmCierre(false);setErroresCierre([]);
     const horaFin=fichaHoy.horaFin||new Date().toTimeString().slice(0,5);
     const cerrada={...fichaHoy,cerrado:true,horaFin};
-    setFichas(prev=>({...prev,[fichaKey]:cerrada}));sset(fichaKey,cerrada);
+    setFichas(prev=>({...prev,[fichaKey]:cerrada}));
+    await sset(fichaKey,cerrada);
+    // El turno siguiente arranca ya con la base pendiente y el operario precargado
     const ni=turnoIdx+1,nk=`bonber:ficha:${fecha}:${ni}`;
-    setFichas(prev=>({...prev,[nk]:mkFicha()}));setTurnoIdx(ni);
-    setConfirmCierre(false);setErroresCierre([]);
+    const pendientes=await calcularPendientes(fecha,ni);
+    const nueva=mkFichaPara(user);
+    if(pendientes.length>0) nueva.rows=[...pendientes,mkRow()];
+    setFichas(prev=>({...prev,[nk]:nueva}));
+    setTurnoIdx(ni);
   }
 
   // Edición de reportes
@@ -643,7 +687,7 @@ function App() {
   async function toggleUser(id){const u=users.map(x=>x.id===id?{...x,active:!x.active}:x);setUsers(u);await sset("bonber:users",u);}
   async function deleteUser(id){const u=users.filter(x=>x.id!==id);setUsers(u);await sset("bonber:users",u);}
 
-  // Análisis — paralelizado
+  // Análisis
   async function correrAnalisis(){
     setAnalisisLoading(true);setAnalisisRan(true);
     const desde=new Date(analisisDesde),hasta=new Date(analisisHasta);
@@ -671,7 +715,7 @@ function App() {
         cantTurnos++;
         const hI=parseHora(f.horaInicio),hF=parseHora(f.horaFin);
         const dur=(hI!=null&&hF!=null&&hF>hI)?hF-hI:0;horasTrabajadas+=dur;
-        const op=f.operario||"Sin asignar";
+        const op=(f.operario||"").trim()||"Sin asignar";
         if(!operarios[op]) operarios[op]={kgFab:0,kgMant:0,litros:0,overruns:[],mermasFab:[],mermasMant:[],turnos:0,horas:0};
         operarios[op].turnos++;operarios[op].horas+=dur;
         for(const r of (f.rows||[])){
@@ -693,6 +737,7 @@ function App() {
   }
 
   function handleLogout(){
+    flushSave();
     setUser(null);setFichas({});setTurnoIdx(0);setAnalisisDatos([]);setAnalisisRan(false);
     setAppReady(false);
     setTimeout(async()=>{const u=await sget("bonber:users");if(u)setUsers(u);setAppReady(true);},100);
