@@ -10,6 +10,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
   import { getFirestore, doc, getDoc, setDoc, deleteDoc, collection, getDocs, query, where, documentId } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  import { getAuth, setPersistence, inMemoryPersistence, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
   const firebaseConfig = {
     apiKey: "AIzaSyDUk_3MieAc1ewvGd7VDdQLkXYqSLTFgUE",
     authDomain: "bonber-produccion.firebaseapp.com",
@@ -18,28 +19,78 @@
     messagingSenderId: "61343173585",
     appId: "1:61343173585:web:defd0c445dc9b3ea156ef0"
   };
+  // (Estos datos NO son secretos: la protección real está en las reglas de Firestore, ver firestore.rules)
   const app = initializeApp(firebaseConfig);
   const db  = getFirestore(app);
+  const auth = getAuth(app);
+  // La sesión vive solo en memoria: al recargar la página hay que volver a ingresar (igual que antes)
+  const authReady = setPersistence(auth, inMemoryPersistence).catch(e=>console.error(e));
+  // Segunda instancia, solo para crear cuentas sin cerrar la sesión del administrador
+  const app2  = initializeApp(firebaseConfig, "creator");
+  const auth2 = getAuth(app2);
+  setPersistence(auth2, inMemoryPersistence).catch(e=>console.error(e));
+
+  // ── Mapa de claves de la app → colecciones de Firestore ──
+  const FICHA = "bonber:ficha:";
+  function toPath(key) {
+    if (key.startsWith(FICHA)) { const [dia, idx] = key.slice(FICHA.length).split(":"); return ["fichas", `${dia}_${idx}`]; }
+    if (key === "bonber:params") return ["config", "params"];
+    throw new Error("Clave no permitida: " + key);
+  }
+  const fromId = id => FICHA + id.replace("_", ":");
+  const KINDS = ["operarios", "admins"];
+  const okKind = k => { if (!KINDS.includes(k)) throw new Error("Colección no permitida"); return k; };
+
   window.fbGet = async (key) => {
-    try { const snap = await getDoc(doc(db,"bonber",key)); return snap.exists()?snap.data().value:null; } catch { return null; }
+    try { const [c,i]=toPath(key); const snap = await getDoc(doc(db,c,i)); return snap.exists()?snap.data().value:null; } catch(e) { console.error(e); return null; }
   };
   window.fbSet = async (key, val) => {
-    try { await setDoc(doc(db,"bonber",key),{value:val}); } catch(e) { console.error(e); }
+    try { const [c,i]=toPath(key); await setDoc(doc(db,c,i),{value:val}); } catch(e) { console.error(e); }
   };
   window.fbDelete = async (key) => {
-    try { await deleteDoc(doc(db,"bonber",key)); } catch(e) { console.error(e); }
+    try { const [c,i]=toPath(key); await deleteDoc(doc(db,c,i)); } catch(e) { console.error(e); }
   };
   window.fbList = async (prefix) => {
-    try { const snap = await getDocs(collection(db,"bonber")); return snap.docs.map(d=>d.id).filter(id=>id.startsWith(prefix)); } catch { return []; }
+    try {
+      if (!prefix.startsWith(FICHA)) return [];
+      const snap = await getDocs(collection(db,"fichas"));
+      return snap.docs.map(d=>fromId(d.id)).filter(k=>k.startsWith(prefix));
+    } catch(e) { console.error(e); return []; }
   };
-  // Lee en UNA sola consulta todos los documentos cuyo id esté en [from, to). Devuelve null si falla.
+  // Lee en UNA sola consulta todas las fichas cuyo id esté en [from, to). Devuelve null si falla.
   window.fbRange = async (from, to) => {
     try {
-      const q = query(collection(db,"bonber"), where(documentId(),">=",from), where(documentId(),"<",to));
+      const a = from.slice(FICHA.length), b = to.slice(FICHA.length);
+      const q = query(collection(db,"fichas"), where(documentId(),">=",a), where(documentId(),"<",b));
       const snap = await getDocs(q);
-      return snap.docs.map(d=>({id:d.id,value:d.data().value}));
+      return snap.docs.map(d=>({id:fromId(d.id),value:d.data().value}));
     } catch(e) { console.error(e); return null; }
   };
+
+  // ── Autenticación y perfiles ──
+  window.fbSignIn = async (email, pass) => { await authReady; const c = await signInWithEmailAndPassword(auth, email, pass); return c.user.uid; };
+  window.fbSignOut = async () => { try { await signOut(auth); } catch(e) { console.error(e); } };
+  // Crea una cuenta con la 2ª instancia. Si el correo ya existe (cuenta huérfana de un usuario borrado)
+  // y la clave coincide, la reutiliza; si no, lanza PIN_TAKEN.
+  window.fbCreateAccount = async (email, pass) => {
+    try {
+      const c = await createUserWithEmailAndPassword(auth2, email, pass);
+      const uid = c.user.uid; await signOut(auth2); return { uid, reused:false };
+    } catch(e) {
+      if (e && e.code === "auth/email-already-in-use") {
+        try {
+          const c = await signInWithEmailAndPassword(auth2, email, pass);
+          const uid = c.user.uid; await signOut(auth2); return { uid, reused:true };
+        } catch { const err = new Error("PIN_TAKEN"); err.code = "PIN_TAKEN"; throw err; }
+      }
+      throw e;
+    }
+  };
+  window.fbGetProfile = async (kind, uid) => { const s = await getDoc(doc(db, okKind(kind), uid)); return s.exists() ? s.data() : null; };
+  window.fbListProfiles = async (kind) => { const s = await getDocs(collection(db, okKind(kind))); return s.docs.map(d=>({id:d.id,...d.data()})); };
+  window.fbSetProfile = async (kind, uid, data) => { await setDoc(doc(db, okKind(kind), uid), data, { merge:true }); };
+  window.fbDeleteProfile = async (kind, uid) => { await deleteDoc(doc(db, okKind(kind), uid)); };
+
   window.firebaseReady = true;
   window.dispatchEvent(new Event("firebaseReady"));
 </script>
@@ -78,7 +129,19 @@ async function slist(prefix) {
 }
 
 // ── CONSTANTES ──
-const ADMIN = { id:"admin", username:"admin", password:"bonber2026", role:"admin", name:"Admin" };
+// Acceso: cada operario entra con un PIN de 6 dígitos y cada administrador con usuario + contraseña,
+// ambos validados por Firebase Authentication. No hay credenciales escritas en este archivo.
+const PIN_LEN = 6;
+const EMAIL_DOM = "@bonber.local";               // dominio ficticio: nadie puede recibir correos ahí
+const pinEmail  = pin => `op${pin}${EMAIL_DOM}`;
+const userEmail = u => { const t=String(u||"").trim().toLowerCase(); return t.includes("@")?t:t.replace(/\s+/g,"_")+EMAIL_DOM; };
+function authMsg(e, fallback) {
+  const c=(e&&e.code)||"", m=String((e&&e.message)||"");
+  if(c==="auth/too-many-requests") return "Demasiados intentos. Esperá unos minutos.";
+  if(c==="auth/network-request-failed") return "Sin conexión. Revisá internet.";
+  if(c==="permission-denied"||/permission|insufficient/i.test(m)) return "Sin permisos. Avisá al administrador.";
+  return fallback;
+}
 const DEFAULT_PARAMS = {
   overrunMin:20, overrunIdeal:25, overrunMax:30,
   sabores:[
@@ -170,25 +233,33 @@ async function calcularPendientes(fechaActual, turnoIdxActual) {
 }
 
 // ── LOGIN ──
-function Login({ users, onLogin }) {
+// onPin(pin) y onAdmin(usuario, clave) devuelven null si salió bien, o el texto del error.
+function Login({ onPin, onAdmin }) {
   const [mode,setMode]=useState("pin");
   const [pin,setPin]=useState("");
   const [uname,setUname]=useState("");
   const [pass,setPass]=useState("");
   const [err,setErr]=useState("");
-  function handleDigit(d) {
+  const [busy,setBusy]=useState(false);
+  async function handleDigit(d) {
+    if(busy) return;
     if(d==="⌫"){setPin(p=>p.slice(0,-1));setErr("");return;}
-    const next=pin.length<4?pin+d:pin; setPin(next);
-    if(next.length===4){
-      const found=users.find(u=>u.role==="operario"&&u.pin===next&&u.active);
-      if(found) onLogin(found);
-      else{setErr("PIN incorrecto");setTimeout(()=>{setPin("");setErr("");},1200);}
+    if(pin.length>=PIN_LEN) return;
+    const next=pin+d; setPin(next);
+    if(next.length===PIN_LEN){
+      setBusy(true);
+      const e=await onPin(next);
+      setBusy(false);
+      if(e){setErr(e);setTimeout(()=>{setPin("");setErr("");},1500);}
     }
   }
-  function handleAdmin(){
-    const all=[ADMIN,...users.filter(u=>u.role==="admin")];
-    const found=all.find(u=>u.username===uname&&u.password===pass&&u.active!==false);
-    if(found) onLogin(found); else setErr("Credenciales incorrectas");
+  async function handleAdmin(){
+    if(busy) return;
+    if(!uname.trim()||!pass){setErr("Ingresá usuario y contraseña");return;}
+    setBusy(true);
+    const e=await onAdmin(uname,pass);
+    setBusy(false);
+    if(e) setErr(e);
   }
   return (
     <div style={{minHeight:"100vh",background:"#111827",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:16}}>
@@ -205,10 +276,10 @@ function Login({ users, onLogin }) {
         </div>
         {mode==="pin"?(
           <div>
-            <p style={{textAlign:"center",fontSize:14,color:"#6b7280",marginBottom:16}}>Ingresá tu PIN de 4 dígitos</p>
-            <div style={{display:"flex",justifyContent:"center",gap:12,marginBottom:24}}>
-              {[0,1,2,3].map(i=>(
-                <div key={i} style={{width:40,height:40,borderRadius:"50%",border:`2px solid ${pin.length>i?"#facc15":"#d1d5db"}`,background:pin.length>i?"#facc15":"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}}>
+            <p style={{textAlign:"center",fontSize:14,color:"#6b7280",marginBottom:16}}>{busy?"Verificando...":`Ingresá tu PIN de ${PIN_LEN} dígitos`}</p>
+            <div style={{display:"flex",justifyContent:"center",gap:10,marginBottom:24}}>
+              {Array.from({length:PIN_LEN},(_,i)=>i).map(i=>(
+                <div key={i} style={{width:36,height:36,borderRadius:"50%",border:`2px solid ${pin.length>i?"#facc15":"#d1d5db"}`,background:pin.length>i?"#facc15":"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}}>
                   {pin.length>i?"●":""}
                 </div>
               ))}
@@ -225,14 +296,14 @@ function Login({ users, onLogin }) {
           <div>
             <div style={{marginBottom:12}}>
               <label style={{fontSize:12,color:"#6b7280",display:"block",marginBottom:4}}>Usuario</label>
-              <input value={uname} onChange={e=>setUname(e.target.value)} style={{border:"1px solid #e5e7eb",borderRadius:8,padding:"8px 12px",width:"100%",fontSize:14}} placeholder="admin"/>
+              <input value={uname} onChange={e=>setUname(e.target.value)} style={{border:"1px solid #e5e7eb",borderRadius:8,padding:"8px 12px",width:"100%",fontSize:14}} placeholder="usuario" autoComplete="username"/>
             </div>
             <div style={{marginBottom:16}}>
               <label style={{fontSize:12,color:"#6b7280",display:"block",marginBottom:4}}>Contraseña</label>
-              <input type="password" value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleAdmin()} style={{border:"1px solid #e5e7eb",borderRadius:8,padding:"8px 12px",width:"100%",fontSize:14}} placeholder="••••••••"/>
+              <input type="password" value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleAdmin()} style={{border:"1px solid #e5e7eb",borderRadius:8,padding:"8px 12px",width:"100%",fontSize:14}} placeholder="••••••••" autoComplete="current-password"/>
             </div>
             {err&&<p style={{color:"#ef4444",fontSize:14,marginBottom:12}}>{err}</p>}
-            <button onClick={handleAdmin} style={{width:"100%",background:"#111",color:"white",fontWeight:600,padding:10,borderRadius:8,border:"none",cursor:"pointer",fontSize:14}}>Ingresar</button>
+            <button onClick={handleAdmin} disabled={busy} style={{width:"100%",background:"#111",color:"white",fontWeight:600,padding:10,borderRadius:8,border:"none",cursor:"pointer",fontSize:14,opacity:busy?0.6:1}}>{busy?"Verificando...":"Ingresar"}</button>
           </div>
         )}
       </div>
@@ -417,7 +488,8 @@ function App() {
   const [user,setUser]=useState(null);
   const [tab,setTab]=useState("Producción");
   const [fecha,setFecha]=useState(today());
-  const [users,setUsers]=useState([]);
+  const [opList,setOpList]=useState([]);
+  const [admList,setAdmList]=useState([]);
   const [params,setParams]=useState(DEFAULT_PARAMS);
   const [appReady,setAppReady]=useState(false);
   const [fichas,setFichas]=useState({});
@@ -444,6 +516,7 @@ function App() {
   const [newRole,setNewRole]=useState("operario");
   const [newPass,setNewPass]=useState("");
   const [userMsg,setUserMsg]=useState("");
+  const [userBusy,setUserBusy]=useState(false);
   const [saving,setSaving]=useState(false);
   const [wipeStep,setWipeStep]=useState(0);
   const [wiping,setWiping]=useState(false);
@@ -488,15 +561,17 @@ function App() {
     };
   },[]);
 
-  // Init app
+  // Init app: antes de ingresar no se lee nada de la base (las reglas lo impiden)
   useEffect(()=>{
     if(!fbReady) return;
-    (async()=>{
-      const p=await sget("bonber:params"); if(p) setParams(p);
-      const u=await sget("bonber:users");  if(u) setUsers(u);
-      setAppReady(true);
-    })();
+    setAppReady(true);
   },[fbReady]);
+
+  // Ya con sesión iniciada: cargar parámetros (lista de sabores y rangos de overrun)
+  useEffect(()=>{
+    if(!user) return;
+    (async()=>{ const p=await sget("bonber:params"); if(p) setParams(p); })();
+  },[user]);
 
   // Cargar turno activo al cambiar fecha o usuario
   useEffect(()=>{
@@ -668,24 +743,88 @@ function App() {
   const totLitros=rows.reduce((s,r)=>s+calcRow(r).litrosStock,0);
   const overrunTotal=rowsConDatos.length>0&&totKgMant>0?(((totLitros-totKgMant)/totKgMant)*100).toFixed(1):"-";
 
-  // Params y usuarios
+  // Params
   async function saveParams(p){setParams(p);await sset("bonber:params",p);}
   function updateParam(f,v){saveParams({...params,[f]:v});}
-  async function addUser(){
-    if(!newName){setUserMsg("Ingresá un nombre.");return;}
-    if(newRole==="operario"&&(newPin.length!==4||isNaN(newPin))){setUserMsg("PIN debe ser 4 dígitos.");return;}
-    if(newRole==="admin"&&!newPass){setUserMsg("Ingresá una contraseña.");return;}
-    const dup=users.find(u=>newRole==="operario"?u.pin===newPin&&u.role==="operario":u.username===newName.toLowerCase().replace(/ /g,"_"));
-    if(dup){setUserMsg("Ya existe.");return;}
-    const nu=newRole==="operario"
-      ?{id:Math.random().toString(36).slice(2),name:newName,role:"operario",pin:newPin,active:true}
-      :{id:Math.random().toString(36).slice(2),name:newName,username:newName.toLowerCase().replace(/ /g,"_"),password:newPass,role:"admin",active:true};
-    const updated=[...users,nu];setUsers(updated);await sset("bonber:users",updated);
-    setNewName("");setNewPin("");setNewPass("");
-    setUserMsg("✓ Usuario creado.");setTimeout(()=>setUserMsg(""),2000);
+
+  // ── Acceso (Firebase Authentication) ──
+  async function loginPin(pin){
+    if(!window.fbSignIn) return "Sin conexión con el servidor. Recargá la página.";
+    try{
+      const uid=await window.fbSignIn(pinEmail(pin),pin);
+      const prof=await window.fbGetProfile("operarios",uid);
+      if(!prof||prof.active!==true){await window.fbSignOut();return "Usuario no habilitado";}
+      setUser({id:uid,name:prof.name,role:"operario"});setTab("Producción");
+      return null;
+    }catch(e){ console.error(e); return authMsg(e,"PIN incorrecto"); }
   }
-  async function toggleUser(id){const u=users.map(x=>x.id===id?{...x,active:!x.active}:x);setUsers(u);await sset("bonber:users",u);}
-  async function deleteUser(id){const u=users.filter(x=>x.id!==id);setUsers(u);await sset("bonber:users",u);}
+  async function loginAdmin(u,p){
+    if(!window.fbSignIn) return "Sin conexión con el servidor. Recargá la página.";
+    try{
+      const uid=await window.fbSignIn(userEmail(u),p);
+      const prof=await window.fbGetProfile("admins",uid);
+      if(!prof){await window.fbSignOut();return "Esa cuenta no es de administrador";}
+      setUser({id:uid,name:prof.name||prof.username||"Admin",username:prof.username,role:"admin"});setTab("Producción");
+      return null;
+    }catch(e){ console.error(e); return authMsg(e,"Credenciales incorrectas"); }
+  }
+
+  // ── Usuarios (solo administrador) ──
+  async function loadUsuarios(){
+    try{
+      const [ops,adms]=await Promise.all([window.fbListProfiles("operarios"),window.fbListProfiles("admins")]);
+      const byName=(a,b)=>String(a.name||"").localeCompare(String(b.name||""));
+      setOpList(ops.sort(byName));setAdmList(adms.sort(byName));
+    }catch(e){console.error(e);setUserMsg("No se pudo cargar la lista de usuarios.");}
+  }
+  useEffect(()=>{ if(isAdmin&&tab==="Usuarios") loadUsuarios(); },[isAdmin,tab]);
+
+  async function addUser(){
+    const nombre=newName.trim();
+    if(!nombre){setUserMsg("Ingresá un nombre.");return;}
+    const esOp=newRole==="operario";
+    const uname=nombre.toLowerCase().replace(/\s+/g,"_");
+    if(esOp){
+      if(newPin.length!==PIN_LEN||!/^\d+$/.test(newPin)){setUserMsg(`El PIN debe tener ${PIN_LEN} dígitos.`);return;}
+      if(opList.find(u=>u.pin===newPin)){setUserMsg("Ya existe un operario con ese PIN.");return;}
+    }else{
+      if(newPass.length<8){setUserMsg("La contraseña debe tener al menos 8 caracteres.");return;}
+      if(admList.find(u=>u.username===uname)){setUserMsg("Ya existe un administrador con ese nombre.");return;}
+    }
+    setUserBusy(true);setUserMsg("");
+    try{
+      if(esOp){
+        const {uid}=await window.fbCreateAccount(pinEmail(newPin),newPin);
+        await window.fbSetProfile("operarios",uid,{name:nombre,pin:newPin,active:true,createdAt:Date.now()});
+      }else{
+        const {uid}=await window.fbCreateAccount(userEmail(uname),newPass);
+        await window.fbSetProfile("admins",uid,{name:nombre,username:uname,createdAt:Date.now()});
+      }
+      setNewName("");setNewPin("");setNewPass("");
+      await loadUsuarios();
+      setUserMsg("✓ Usuario creado.");setTimeout(()=>setUserMsg(""),2500);
+    }catch(e){
+      console.error(e);
+      setUserMsg(e&&e.code==="PIN_TAKEN"?(esOp?"Ese PIN no está disponible. Elegí otro.":"Ese usuario no está disponible. Elegí otro nombre."):authMsg(e,"No se pudo crear el usuario."));
+    }
+    setUserBusy(false);
+  }
+  async function toggleUser(id){
+    const u=opList.find(x=>x.id===id);if(!u) return;
+    try{
+      await window.fbSetProfile("operarios",id,{active:!u.active});
+      setOpList(prev=>prev.map(x=>x.id===id?{...x,active:!u.active}:x));
+    }catch(e){console.error(e);setUserMsg("No se pudo actualizar el usuario.");}
+  }
+  async function deleteUser(kind,id){
+    if(kind==="admins"&&id===user.id){setUserMsg("No podés eliminar tu propia cuenta.");return;}
+    if(!window.confirm("¿Eliminar este usuario? Ya no podrá ingresar.")) return;
+    try{
+      await window.fbDeleteProfile(kind,id);
+      if(kind==="operarios") setOpList(prev=>prev.filter(x=>x.id!==id));
+      else setAdmList(prev=>prev.filter(x=>x.id!==id));
+    }catch(e){console.error(e);setUserMsg("No se pudo eliminar el usuario.");}
+  }
 
   // Análisis
   async function correrAnalisis(){
@@ -736,11 +875,11 @@ function App() {
     setAnalisisDatos(resultado);setAnalisisLoading(false);
   }
 
-  function handleLogout(){
-    flushSave();
+  async function handleLogout(){
+    await flushSave();            // guardar lo pendiente ANTES de cerrar la sesión (si no, la escritura sería rechazada)
+    await window.fbSignOut();
     setUser(null);setFichas({});setTurnoIdx(0);setAnalisisDatos([]);setAnalisisRan(false);
-    setAppReady(false);
-    setTimeout(async()=>{const u=await sget("bonber:users");if(u)setUsers(u);setAppReady(true);},100);
+    setOpList([]);setAdmList([]);setUserMsg("");setParams(DEFAULT_PARAMS);setTab("Producción");
   }
 
   const ic={border:"1px solid #e5e7eb",borderRadius:4,padding:"4px 8px",fontSize:14,width:"100%"};
@@ -753,7 +892,7 @@ function App() {
       <p style={{color:"#6b7280",fontSize:11}}>Si tarda mucho, verificá tu conexión a internet.</p>
     </div>
   );
-  if(!user) return <Login users={users} onLogin={u=>{setUser(u);setTab("Producción");}}/>;
+  if(!user) return <Login onPin={loginPin} onAdmin={loginAdmin}/>;
 
   return (
     <div style={{minHeight:"100vh",background:"#f9fafb"}}>
@@ -1330,36 +1469,42 @@ function App() {
                 </div>
                 {newRole==="operario"?(
                   <div>
-                    <label style={{fontSize:11,color:"#6b7280",display:"block",marginBottom:4}}>PIN (4 dígitos)</label>
-                    <input value={newPin} onChange={e=>setNewPin(e.target.value.replace(/\D/g,"").slice(0,4))} style={{border:"1px solid #e5e7eb",borderRadius:4,padding:"4px 8px",fontSize:14,width:80}} placeholder="1234"/>
+                    <label style={{fontSize:11,color:"#6b7280",display:"block",marginBottom:4}}>PIN ({PIN_LEN} dígitos)</label>
+                    <input value={newPin} onChange={e=>setNewPin(e.target.value.replace(/\D/g,"").slice(0,PIN_LEN))} style={{border:"1px solid #e5e7eb",borderRadius:4,padding:"4px 8px",fontSize:14,width:100}} placeholder="123456"/>
                   </div>
                 ):(
                   <div>
-                    <label style={{fontSize:11,color:"#6b7280",display:"block",marginBottom:4}}>Contraseña</label>
-                    <input type="password" value={newPass} onChange={e=>setNewPass(e.target.value)} style={{border:"1px solid #e5e7eb",borderRadius:4,padding:"4px 8px",fontSize:14,width:120}}/>
+                    <label style={{fontSize:11,color:"#6b7280",display:"block",marginBottom:4}}>Contraseña (mín. 8)</label>
+                    <input type="password" value={newPass} onChange={e=>setNewPass(e.target.value)} style={{border:"1px solid #e5e7eb",borderRadius:4,padding:"4px 8px",fontSize:14,width:140}}/>
                   </div>
                 )}
               </div>
               {userMsg&&<p style={{fontSize:13,marginBottom:8,color:userMsg.startsWith("✓")?"#16a34a":"#dc2626"}}>{userMsg}</p>}
-              <button onClick={addUser} style={{background:"#111",color:"white",fontWeight:600,padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:13}}>Crear</button>
+              <button onClick={addUser} disabled={userBusy} style={{background:"#111",color:"white",fontWeight:600,padding:"8px 16px",borderRadius:8,border:"none",cursor:"pointer",fontSize:13,opacity:userBusy?0.6:1}}>{userBusy?"Creando...":"Crear"}</button>
             </div>
             <div style={{background:"white",borderRadius:12,boxShadow:"0 1px 3px rgba(0,0,0,0.1)",padding:16}}>
-              <h3 style={{fontWeight:700,color:"#111",margin:"0 0 12px"}}>Usuarios</h3>
-              <div style={{display:"flex",alignItems:"center",gap:8,padding:8,background:"#fefce8",borderRadius:8,fontSize:13,marginBottom:8}}>
-                <span style={{width:24,height:24,borderRadius:"50%",background:"#facc15",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700}}>A</span>
-                <span style={{fontWeight:500}}>admin</span>
-                <span style={{fontSize:11,color:"#9ca3af"}}>Principal</span>
-                <span style={{marginLeft:"auto",fontSize:11,color:"#16a34a",fontWeight:600}}>Activo</span>
-              </div>
-              {users.length===0&&<p style={{color:"#9ca3af",fontSize:13,textAlign:"center",padding:"16px 0"}}>No hay usuarios creados.</p>}
-              {users.map(u=>(
-                <div key={u.id} style={{display:"flex",alignItems:"center",gap:8,padding:8,borderRadius:8,fontSize:13,marginBottom:4,background:u.active?"#f9fafb":"#fef2f2",opacity:u.active?1:0.6}}>
-                  <span style={{width:24,height:24,borderRadius:"50%",background:u.role==="admin"?"#facc15":"#dbeafe",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:u.role==="admin"?"#111":"#1d4ed8"}}>{u.role==="admin"?"A":"O"}</span>
+              <h3 style={{fontWeight:700,color:"#111",margin:"0 0 12px"}}>Administradores</h3>
+              {admList.length===0&&<p style={{color:"#9ca3af",fontSize:13,textAlign:"center",padding:"8px 0"}}>Sin datos.</p>}
+              {admList.map(u=>(
+                <div key={u.id} style={{display:"flex",alignItems:"center",gap:8,padding:8,borderRadius:8,fontSize:13,marginBottom:4,background:"#fefce8"}}>
+                  <span style={{width:24,height:24,borderRadius:"50%",background:"#facc15",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#111"}}>A</span>
                   <span style={{fontWeight:500}}>{u.name}</span>
-                  <span style={{fontSize:11,color:"#9ca3af"}}>{u.role==="operario"?`PIN: ${u.pin}`:`@${u.username}`}</span>
+                  <span style={{fontSize:11,color:"#9ca3af"}}>@{u.username}</span>
+                  {u.id===user.id&&<span style={{fontSize:11,color:"#9ca3af"}}>(vos)</span>}
+                  <span style={{marginLeft:"auto",fontSize:11,fontWeight:600,color:"#16a34a"}}>Activo</span>
+                  {u.id!==user.id&&<button onClick={()=>deleteUser("admins",u.id)} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"#d1d5db"}}>×</button>}
+                </div>
+              ))}
+              <h3 style={{fontWeight:700,color:"#111",margin:"16px 0 12px"}}>Operarios</h3>
+              {opList.length===0&&<p style={{color:"#9ca3af",fontSize:13,textAlign:"center",padding:"16px 0"}}>No hay operarios creados.</p>}
+              {opList.map(u=>(
+                <div key={u.id} style={{display:"flex",alignItems:"center",gap:8,padding:8,borderRadius:8,fontSize:13,marginBottom:4,background:u.active?"#f9fafb":"#fef2f2",opacity:u.active?1:0.6}}>
+                  <span style={{width:24,height:24,borderRadius:"50%",background:"#dbeafe",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#1d4ed8"}}>O</span>
+                  <span style={{fontWeight:500}}>{u.name}</span>
+                  <span style={{fontSize:11,color:"#9ca3af"}}>PIN: {u.pin}</span>
                   <span style={{marginLeft:"auto",fontSize:11,fontWeight:600,color:u.active?"#16a34a":"#dc2626"}}>{u.active?"Activo":"Inactivo"}</span>
                   <button onClick={()=>toggleUser(u.id)} style={{fontSize:11,color:"#6b7280",background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>{u.active?"Deshabilitar":"Habilitar"}</button>
-                  <button onClick={()=>deleteUser(u.id)} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"#d1d5db"}}>×</button>
+                  <button onClick={()=>deleteUser("operarios",u.id)} style={{background:"none",border:"none",fontSize:20,cursor:"pointer",color:"#d1d5db"}}>×</button>
                 </div>
               ))}
             </div>
